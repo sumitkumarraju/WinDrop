@@ -21,11 +21,14 @@
 <script>
 // WinDrop explainer — a code-driven motion-graphics film.
 //   explainer.html            plays in the browser (click for sound)
+//   explainer.html?cut=15     the fast 15-second cut, with camera zooms and an animated cursor
 //   explainer.html?export=1   renders every frame and encodes H.264 + AAC with WebCodecs (used to make the MP4)
 //   explainer.html?snap=1,5   renders single frames to PNG for review
 // Everything is a pure function of time t, so preview and export look identical.
 
-const W = 1920, H = 1080, FPS = 30, DURATION = 66;
+const params = new URLSearchParams(location.search);
+const SHORT_CUT = params.get('cut') === '15';
+const W = 1920, H = 1080, FPS = 30, DURATION = SHORT_CUT ? 15 : 66;
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const frame = new OffscreenCanvas(W, H), fctx = frame.getContext('2d');
@@ -772,30 +775,354 @@ function sOutro(c, lt) {
   });
 }
 
-const SCENES = [
-  { s: 0, e: 6.2, draw: sIntro },
-  { s: 5.7, e: 13.2, draw: sKinetic },
-  { s: 12.7, e: 22.2, draw: sPair },
-  { s: 21.7, e: 33.2, draw: sSend },
-  { s: 32.7, e: 40.2, draw: sNotify },
-  { s: 39.7, e: 49.2, draw: sInternet },
-  { s: 48.7, e: 55.2, draw: sAlways },
-  { s: 54.7, e: 61.2, draw: sInstall },
-  { s: 60.7, e: DURATION, draw: sOutro },
+const FULL_CUT = {
+  scenes: [
+    { s: 0, e: 6.2, draw: sIntro },
+    { s: 5.7, e: 13.2, draw: sKinetic },
+    { s: 12.7, e: 22.2, draw: sPair },
+    { s: 21.7, e: 33.2, draw: sSend },
+    { s: 32.7, e: 40.2, draw: sNotify },
+    { s: 39.7, e: 49.2, draw: sInternet },
+    { s: 48.7, e: 55.2, draw: sAlways },
+    { s: 54.7, e: 61.2, draw: sInstall },
+    { s: 60.7, e: 66, draw: sOutro },
+  ],
+  // Full-frame ripples (x, y on screen)
+  ripples: [
+    { t: 1.0, x: 960, y: 420, a: 16 },
+    { t: 18.2, x: 600, y: 560, a: 12 },
+    { t: 28.1, x: 1300, y: 520, a: 15 },
+    { t: 44.0, x: 960, y: 830, a: 9 },
+    { t: 61.0, x: 960, y: 410, a: 16 },
+  ],
+  camera: [],
+  transition: 0.6,
+  audio: {
+    chord: 4, pulseFrom: 6.0, pulseTo: 58.5, pulseEvery: 0.6,
+    chimes: [1.0, 18.2, 28.1, 33.5, 34.8, 44.0, 61.0],
+    whooshes: [5.7, 12.7, 21.7, 32.7, 39.7, 48.7, 54.7, 60.7],
+    clicks: [],
+    ticks: [
+      ...[0, 1, 2, 3, 4, 5].map(i => 12.7 + 3.1 + i * 0.22),
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8].map(i => 39.7 + 1.9 + 2.4 + i * 0.13),
+      ...Array.from({ length: 44 }, (_, i) => 55.5 + i * 0.045),
+    ],
+  },
+};
+
+// ---------- the 15-second cut: same scenes, ~1.8x faster, with camera zooms and a cursor ----------
+// Piecewise-linear time remap: [[shortTime, originalTime], ...] — lets the short cut replay the
+// full scenes' animations at a different pace.
+function remap(t, pts) {
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (t <= pts[i][0]) return lerp(pts[i - 1][1], pts[i][1], (t - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]));
+  }
+  const [a, b] = pts.slice(-2);
+  return b[1] + (t - b[0]) * (b[1] - a[1]) / (b[0] - a[0]);
+}
+
+// macOS-style pointer; scales down on press
+function drawCursor(c, x, y, press = 0, alpha = 1) {
+  if (alpha <= 0) return;
+  c.save();
+  c.globalAlpha *= alpha;
+  c.translate(x, y);
+  const s = 1.7 * (1 - 0.14 * press);
+  c.scale(s, s);
+  c.shadowColor = 'rgba(0,0,0,0.45)'; c.shadowBlur = 10; c.shadowOffsetY = 3;
+  c.beginPath();
+  c.moveTo(0, 0); c.lineTo(0, 22); c.lineTo(5.5, 16.8); c.lineTo(9.4, 25.6);
+  c.lineTo(13, 24); c.lineTo(9.2, 15.4); c.lineTo(16.4, 15.4); c.closePath();
+  c.fillStyle = '#111'; c.fill();
+  c.shadowColor = 'transparent';
+  c.lineJoin = 'round'; c.lineWidth = 1.6; c.strokeStyle = '#fff'; c.stroke();
+  c.restore();
+}
+
+function clickRing(c, x, y, k) {
+  if (k <= 0 || k >= 1) return;
+  c.save();
+  c.globalAlpha *= 1 - k;
+  c.beginPath(); c.arc(x, y, 14 + ease.outCubic(k) * 46, 0, Math.PI * 2);
+  c.lineWidth = 4; c.strokeStyle = C.sky; c.stroke();
+  c.restore();
+}
+
+// Follow keyframes [{t, x, y}] with smooth ease-in-out glides between them.
+function pathAt(keys, t) {
+  if (t <= keys[0].t) return keys[0];
+  for (let i = 1; i < keys.length; i++) {
+    if (t <= keys[i].t) {
+      const k = ease.inOut(prog(t, keys[i - 1].t, keys[i].t));
+      return { x: lerp(keys[i - 1].x, keys[i].x, k), y: lerp(keys[i - 1].y, keys[i].y, k), z: lerp(keys[i - 1].z ?? 1, keys[i].z ?? 1, k) };
+    }
+  }
+  return keys[keys.length - 1];
+}
+
+function shortIntro(c, lt) {
+  sIntro(c, lt * 1.8);
+}
+
+function shortPair(c, lt) {
+  kinetic(c, ['Pair', 'with', 'a', 'code.'], 960, 150, lt - 0.05, { size: 74, accent: [3] });
+  const px = lerp(-300, 600, ease.spring(prog(lt, 0, 0.55)));
+  const lx = lerp(2300, 1300, ease.spring(prog(lt, 0.05, 0.6)));
+  const lap = remap(lt, [[0, 0.6], [0.25, 1.2], [0.9, 2.3], [3.2, 4.0]]);
+  const ph = remap(lt, [[0, 1.6], [0.9, 2.7], [2.1, 4.6], [2.3, 5.5], [3.2, 6.6]]);
+  laptop(c, lx, 560, 0.86, (cc, w, h) => pairLaptopScreen(cc, w, h, lap));
+  phone(c, px, 590, 0.86, (cc, w, h) => pairPhoneScreen(cc, w, h, ph));
+}
+
+function shortSend(c, lt) {
+  sSend(c, lt * 1.75);
+}
+
+// WinDrop window on the PC, in a simplified form the cursor can use
+function deskScreen(c, w, h, st) {
+  miniHeader(c, w);
+  // "Send to phone" button (hover + press states)
+  const sb = { x: 520, y: 20, w: 170, h: 44 };
+  c.save();
+  c.translate(sb.x + sb.w / 2, sb.y + sb.h / 2);
+  const hs = 1 + 0.06 * st.sendHover - 0.05 * st.sendPress;
+  c.scale(hs, hs);
+  c.shadowColor = `rgba(10,132,255,${0.25 + 0.4 * st.sendHover})`; c.shadowBlur = 14 + 16 * st.sendHover;
+  rr(c, -sb.w / 2, -sb.h / 2, sb.w, sb.h, 10);
+  c.fillStyle = st.sendHover > 0.5 ? '#2a95ff' : C.blue; c.fill();
+  c.shadowColor = 'transparent';
+  icon(c, 'send', -sb.w / 2 + 26, 0, 20, '#fff', 2.4);
+  text(c, 'Send to phone', 12, 7, { size: 18, weight: 600 });
+  c.restore();
+  rr(c, 702, 20, 80, 44, 10); c.fillStyle = 'rgba(255,255,255,0.08)'; c.fill();
+  icon(c, 'archive', 742, 42, 22, C.white, 1.8);
+
+  waves(c, 230, 290, 62, st.t, { period: st.busy ? 1.2 : 2.6, alpha: 0.5 });
+  avatar(c, 230, 290, 62, 'laptop');
+  text(c, 'SKR', 230, 410, { size: 28, weight: 700 });
+  text(c, st.status, 230, 442, { size: 17, weight: 500, color: C.muted });
+
+  // Internet mode card
+  glass(c, 450, 90, 330, 380, 18, { shadow: 0 });
+  text(c, 'Internet mode', 474, 132, { size: 20, weight: 700, align: 'left' });
+  text(c, 'Different networks', 474, 158, { size: 15, weight: 500, align: 'left', color: C.muted });
+  const sw = { x: 696, y: 116, w: 62, h: 34 };
+  c.save();
+  c.translate(sw.x + sw.w / 2, sw.y + sw.h / 2);
+  const ss = 1 + 0.1 * st.netHover - 0.06 * st.netPress;
+  c.scale(ss, ss);
+  if (st.netHover > 0.05) { c.shadowColor = 'rgba(100,210,255,0.6)'; c.shadowBlur = 18 * st.netHover; }
+  rr(c, -sw.w / 2, -sw.h / 2, sw.w, sw.h, sw.h / 2);
+  c.fillStyle = st.netOn > 0 ? `rgba(10,132,255,${0.3 + 0.7 * st.netOn})` : 'rgba(255,255,255,0.14)'; c.fill();
+  c.shadowColor = 'transparent';
+  c.beginPath(); c.arc(lerp(-14, 14, ease.outCubic(st.netOn)), 0, 12, 0, Math.PI * 2); c.fillStyle = '#fff'; c.fill();
+  c.restore();
+  if (st.netOn > 0) {
+    c.save();
+    c.globalAlpha *= ease.outCubic(st.netOn);
+    c.beginPath(); c.arc(482, 200, 6, 0, Math.PI * 2); c.fillStyle = C.green; c.fill();
+    text(c, 'Online — reachable from anywhere', 498, 206, { size: 15, weight: 500, align: 'left', color: C.muted });
+    text(c, 'ROOM CODE', 474, 250, { size: 14, weight: 600, align: 'left', color: C.muted, spacing: 2 });
+    const code = 'ZSBE-G9KY', pool = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    [...code].forEach((ch, i) => {
+      const land = 0.15 + i * 0.06;
+      const shown = ch === '-' ? '–' : st.roomT < land ? pool[Math.floor(st.roomT * 30 + i * 5) % pool.length] : ch;
+      const x = 474 + i * 33;
+      rr(c, x, 266, 29, 44, 6); c.fillStyle = 'rgba(255,255,255,0.08)'; c.fill();
+      c.font = `700 26px ${MONO}`; c.textAlign = 'center';
+      c.fillStyle = st.roomT >= land ? C.sky : C.white;
+      c.fillText(shown, x + 14.5, 298);
+    });
+    qr(c, 486, 336, 104, 11);
+    text(c, 'Scan or enter', 632, 380, { size: 15, weight: 500, align: 'left', color: C.muted });
+    text(c, 'the room code', 632, 402, { size: 15, weight: 500, align: 'left', color: C.muted });
+    c.restore();
+  } else {
+    text(c, 'Received', 474, 230, { size: 18, weight: 700, align: 'left' });
+    SEND_FILES.forEach(([ic, name], i) => {
+      icon(c, ic, 488, 268 + i * 52, 22, C.sky, 2);
+      text(c, name, 510, 275 + i * 52, { size: 15, weight: 600, align: 'left' });
+    });
+  }
+}
+
+// PC -> phone, notifications and Internet mode, driven by a cursor
+const DESK = { lx: 780, ly: 560, s: 1, px: 1520, py: 600, ps: 0.8 };
+const deskPoint = (sx, sy) => ({ x: DESK.lx + (sx - 400) * DESK.s, y: DESK.ly + (sy - 250) * DESK.s });
+const SEND_BTN = deskPoint(605, 42);
+const NET_SWITCH = deskPoint(727, 133);
+const CURSOR_KEYS = [
+  { t: 0.0, x: 1350, y: 1000 }, { t: 0.25, x: 1350, y: 1000 },
+  { t: 0.95, x: SEND_BTN.x + 6, y: SEND_BTN.y + 4 }, { t: 3.05, x: SEND_BTN.x + 6, y: SEND_BTN.y + 4 },
+  { t: 3.5, x: NET_SWITCH.x + 4, y: NET_SWITCH.y + 4 }, { t: 5.0, x: NET_SWITCH.x + 4, y: NET_SWITCH.y + 4 },
 ];
+const CLICK_SEND = 1.2, CLICK_NET = 3.62;
+
+function shortDesk(c, lt) {
+  // headline swaps from "Both ways" to "Any network" halfway through
+  const swap = prog(lt, 2.85, 3.15);
+  if (swap < 1) {
+    c.save(); c.globalAlpha *= 1 - swap; if (swap > 0) c.filter = `blur(${swap * 12}px)`;
+    kinetic(c, ['Both', 'ways.', 'Notified.'], 960, 150, lt - 0.05, { size: 74, accent: [2] });
+    c.restore();
+  }
+  kinetic(c, ['Any', 'network?', 'Room', 'code.'], 960, 150, lt - 3.0, { size: 74, accent: [2, 3] });
+
+  const cur = pathAt(CURSOR_KEYS, lt);
+  const near = (p, r = 70) => clamp(1 - (Math.hypot(cur.x - p.x, cur.y - p.y) - 10) / r);
+  const press = t0 => (lt > t0 - 0.08 && lt < t0 + 0.14 ? 1 : 0);
+  const sent = lt >= CLICK_SEND + 0.05;
+  const netOn = ease.outCubic(prog(lt, CLICK_NET, CLICK_NET + 0.25));
+
+  laptop(c, DESK.lx, DESK.ly, DESK.s, (cc, w, h) => deskScreen(cc, w, h, {
+    t: lt,
+    busy: lt > CLICK_SEND && lt < CLICK_SEND + 0.8,
+    status: netOn > 0 ? 'Online · room ZSBE-G9KY' : sent ? 'Sent 1 file to iPhone' : 'iPhone connected',
+    sendHover: lt < 3.1 ? near(SEND_BTN) : 0,
+    sendPress: press(CLICK_SEND),
+    netHover: lt > 3.1 ? near(NET_SWITCH, 50) : 0,
+    netPress: press(CLICK_NET),
+    netOn,
+    roomT: lt - CLICK_NET - 0.15,
+  }));
+
+  // the file flies from the PC to the phone
+  const fp = prog(lt, CLICK_SEND + 0.08, CLICK_SEND + 0.68);
+  if (fp > 0 && fp < 1) {
+    const e = ease.inOut(fp);
+    const x = lerp(SEND_BTN.x - 380, DESK.px, e), y = lerp(DESK.ly - 30, DESK.py - 120, e) - Math.sin(e * Math.PI) * 200;
+    c.save();
+    c.globalAlpha *= Math.sin(fp * Math.PI);
+    c.shadowColor = 'rgba(100,210,255,0.8)'; c.shadowBlur = 40;
+    c.translate(x, y); const s = 0.7 + Math.sin(e * Math.PI) * 0.5; c.scale(s, s);
+    glass(c, -42, -42, 84, 84, 22, { fill: 'rgba(20,40,80,0.9)', line: 'rgba(100,210,255,0.6)', shadow: 0 });
+    icon(c, 'file', 0, 0, 40, C.sky, 2.2);
+    c.restore();
+  }
+
+  phone(c, DESK.px, DESK.py, DESK.ps, (cc, w, h) => {
+    waves(cc, w / 2, 300, 56, lt, { alpha: 0.45 });
+    avatar(cc, w / 2, 300, 56, 'laptop');
+    text(cc, 'SKR', w / 2, 400, { size: 26, weight: 700 });
+    if (sent) {
+      fadeUp(cc, lt - CLICK_SEND - 0.75, () => {
+        glass(cc, 14, 450, w - 28, 160, 20, { shadow: 0 });
+        text(cc, 'From your PC', 32, 484, { size: 18, weight: 700, align: 'left' });
+        icon(cc, 'file', 46, 530, 24, C.sky, 2);
+        text(cc, 'Invoice.pdf', 70, 536, { size: 16, weight: 600, align: 'left' });
+        rr(cc, w - 104, 512, 76, 36, 18); cc.fillStyle = 'rgba(10,132,255,0.2)'; cc.fill();
+        text(cc, 'Save', w - 66, 536, { size: 15, weight: 600, color: C.sky });
+      }, 14);
+      const bk = ease.spring(prog(lt, CLICK_SEND + 0.65, CLICK_SEND + 1.4));
+      const out = prog(lt, 2.9, 3.2);
+      cc.save();
+      cc.translate(0, (1 - bk) * -180 - out * 180);
+      glass(cc, 10, 52, w - 20, 104, 26, { fill: 'rgba(40,46,62,0.97)', shadow: 0.5 });
+      appTile(cc, 44, 104, 40);
+      text(cc, 'WINDROP', 76, 84, { size: 13, weight: 700, align: 'left', color: C.muted, spacing: 1 });
+      text(cc, 'SKR sent you a file', 76, 110, { size: 17, weight: 700, align: 'left' });
+      text(cc, 'Invoice.pdf — tap to save', 76, 134, { size: 15, weight: 500, align: 'left' });
+      cc.restore();
+    }
+  });
+
+  clickRing(c, SEND_BTN.x, SEND_BTN.y, prog(lt, CLICK_SEND, CLICK_SEND + 0.45));
+  clickRing(c, NET_SWITCH.x, NET_SWITCH.y, prog(lt, CLICK_NET, CLICK_NET + 0.45));
+  const press1 = Math.max(press(CLICK_SEND), press(CLICK_NET));
+  drawCursor(c, cur.x, cur.y, press1, ease.outCubic(prog(lt, 0.1, 0.35)));
+}
+
+function shortOutro(c, lt) {
+  sOutro(c, lt * 2.4);
+}
+
+const S = { pair: 1.8, send: 4.8, desk: 8.8, outro: 13.4 };
+const SHORT_CUT_DEF = {
+  scenes: [
+    { s: 0, e: 2.1, draw: shortIntro },
+    { s: S.pair, e: 5.1, draw: shortPair },
+    { s: S.send, e: 9.1, draw: shortSend },
+    { s: S.desk, e: 13.7, draw: shortDesk },
+    { s: S.outro, e: 15, draw: shortOutro },
+  ],
+  // ripples given in scene (world) coordinates; the camera position at that moment is applied
+  ripples: [
+    { t: 0.55, x: 960, y: 420, a: 14 },
+    { t: S.pair + 2.32, x: 600, y: 500, a: 12, world: true },
+    { t: S.send + 3.66, x: 1201, y: 710, a: 14, world: true },
+    { t: S.desk + CLICK_SEND + 1.0, x: DESK.px, y: DESK.py - 230, a: 10, world: true },
+    { t: S.desk + CLICK_NET, x: NET_SWITCH.x, y: NET_SWITCH.y, a: 8, world: true },
+    { t: S.outro + 0.55, x: 960, y: 410, a: 14 },
+  ],
+  // Screen-Studio-style camera: zoom into whatever is happening, glide between points
+  camera: [
+    { t: 0, x: 960, y: 540, z: 1 },
+    { t: S.pair + 0.5, x: 960, y: 540, z: 1 },
+    { t: S.pair + 0.9, x: 1429, y: 633, z: 1.75 }, { t: S.pair + 1.35, x: 1429, y: 633, z: 1.75 },
+    { t: S.pair + 1.75, x: 600, y: 628, z: 1.75 }, { t: S.pair + 2.2, x: 600, y: 628, z: 1.75 },
+    { t: S.pair + 2.6, x: 960, y: 540, z: 1 },
+    { t: S.send + 1.0, x: 960, y: 540, z: 1 },
+    { t: S.send + 1.5, x: 900, y: 500, z: 1.22 }, { t: S.send + 3.1, x: 900, y: 500, z: 1.22 },
+    { t: S.send + 3.5, x: 1201, y: 690, z: 1.6 }, { t: S.send + 4.0, x: 1201, y: 690, z: 1.6 },
+    { t: S.desk + 0.35, x: 960, y: 540, z: 1 },
+    { t: S.desk + 0.6, x: 960, y: 540, z: 1 },
+    { t: S.desk + 1.0, x: SEND_BTN.x, y: SEND_BTN.y + 30, z: 1.55 }, { t: S.desk + 1.45, x: SEND_BTN.x, y: SEND_BTN.y + 30, z: 1.55 },
+    { t: S.desk + 1.85, x: DESK.px - 40, y: DESK.py - 160, z: 1.6 }, { t: S.desk + 2.6, x: DESK.px - 40, y: DESK.py - 160, z: 1.6 },
+    { t: S.desk + 3.0, x: 960, y: 540, z: 1 },
+    { t: S.desk + 3.2, x: 960, y: 540, z: 1 },
+    { t: S.desk + 3.55, x: NET_SWITCH.x - 20, y: NET_SWITCH.y + 60, z: 1.65 }, { t: S.desk + 4.3, x: NET_SWITCH.x - 60, y: NET_SWITCH.y + 110, z: 1.65 },
+    { t: S.desk + 4.65, x: 960, y: 540, z: 1 },
+    { t: 15, x: 960, y: 540, z: 1 },
+  ],
+  transition: 0.3,
+  audio: {
+    chord: 2, pulseFrom: 1.8, pulseTo: 13.5, pulseEvery: 0.5,
+    chimes: [0.55, S.pair + 2.32, S.send + 3.66, S.desk + CLICK_SEND + 1.0, S.outro + 0.55],
+    whooshes: [S.pair, S.send, S.desk, S.desk + 2.9, S.outro],
+    clicks: [S.desk + CLICK_SEND, S.desk + CLICK_NET],
+    ticks: [
+      ...[0, 1, 2, 3, 4, 5].map(i => S.pair + 0.9 + (0.4 + i * 0.22) * 0.632),
+      ...Array.from({ length: 9 }, (_, i) => S.desk + CLICK_NET + 0.15 + i * 0.06),
+    ],
+  },
+};
+
+const CUT = SHORT_CUT ? SHORT_CUT_DEF : FULL_CUT;
+const SCENES = CUT.scenes;
+const CAMERA = CUT.camera;
+
+function cameraAt(t) {
+  if (!CAMERA.length) return { x: W / 2, y: H / 2, z: 1 };
+  const k = pathAt(CAMERA, t);
+  const z = Math.max(1, k.z);
+  // keep the zoomed view inside the frame
+  return { x: clamp(k.x, W / (2 * z), W - W / (2 * z)), y: clamp(k.y, H / (2 * z), H - H / (2 * z)), z };
+}
+
+// Ripple origins on screen (ripples in world coordinates follow the camera at that moment)
+const RIPPLES = CUT.ripples.map(r => {
+  if (!r.world) return r;
+  const cam = cameraAt(r.t);
+  return { ...r, x: (r.x - cam.x) * cam.z + W / 2, y: (r.y - cam.y) * cam.z + H / 2 };
+});
+
+const cam = new OffscreenCanvas(W, H), cctx = cam.getContext('2d');
+function applyCamera(t) {
+  const { x, y, z } = cameraAt(t);
+  if (z <= 1.001) return frame;
+  cctx.setTransform(1, 0, 0, 1, 0, 0);
+  cctx.fillStyle = '#000'; cctx.fillRect(0, 0, W, H);
+  cctx.translate(W / 2, H / 2); cctx.scale(z, z); cctx.translate(-x, -y);
+  cctx.drawImage(frame, 0, 0);
+  return cam;
+}
 
 // Full-frame ripple: the WinDrop / Apple "Ripple" shader — each ring of the picture is pushed
 // outward by amplitude·sin(f·t)·e^(−d·t) and lightened or darkened with it, plus a glowing front.
-const RIPPLES = [
-  { t: 1.0, x: 960, y: 420, a: 16 },
-  { t: 18.2, x: 600, y: 560, a: 12 },
-  { t: 28.1, x: 1300, y: 520, a: 15 },
-  { t: 44.0, x: 960, y: 830, a: 9 },
-  { t: 61.0, x: 960, y: 410, a: 16 },
-];
-
 function composite(t) {
-  ctx.drawImage(frame, 0, 0);
+  const src = applyCamera(t);
+  ctx.drawImage(src, 0, 0);
   for (const r of RIPPLES) {
     const age = t - r.t;
     if (age <= 0 || age > 2.6) continue;
@@ -815,7 +1142,7 @@ function composite(t) {
       ctx.arc(r.x, r.y, rad, 0, Math.PI * 2, true);
       ctx.clip();
       ctx.translate(r.x, r.y); ctx.scale(s, s); ctx.translate(-r.x, -r.y);
-      ctx.drawImage(frame, 0, 0);
+      ctx.drawImage(src, 0, 0);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       const light = (0.3 * amt) / r.a;
       ctx.fillStyle = light > 0 ? `rgba(255,255,255,${light * 0.55})` : `rgba(0,0,0,${-light * 0.55})`;
@@ -836,7 +1163,8 @@ function composite(t) {
       ctx.restore();
     }
   }
-  if (t > DURATION - 0.9) { ctx.fillStyle = `rgba(0,0,0,${prog(t, DURATION - 0.9, DURATION)})`; ctx.fillRect(0, 0, W, H); }
+  const fade = SHORT_CUT ? 0.45 : 0.9;
+  if (t > DURATION - fade) { ctx.fillStyle = `rgba(0,0,0,${prog(t, DURATION - fade, DURATION)})`; ctx.fillRect(0, 0, W, H); }
   if (t < 0.4) { ctx.fillStyle = `rgba(0,0,0,${1 - prog(t, 0, 0.4)})`; ctx.fillRect(0, 0, W, H); }
 }
 
@@ -845,8 +1173,9 @@ function render(t) {
   for (const sc of SCENES) {
     if (t < sc.s || t >= sc.e) continue;
     const lt = t - sc.s, dur = sc.e - sc.s;
-    const inK = sc.s === 0 ? 1 : ease.outCubic(clamp(lt / 0.6));
-    const outK = sc.e >= DURATION ? 0 : ease.inCubic(clamp((lt - (dur - 0.5)) / 0.5));
+    const tr = CUT.transition;
+    const inK = sc.s === 0 ? 1 : ease.outCubic(clamp(lt / tr));
+    const outK = sc.e >= DURATION ? 0 : ease.inCubic(clamp((lt - (dur - tr * 0.85)) / (tr * 0.85)));
     if (inK >= 1 && outK <= 0) { fctx.save(); sc.draw(fctx, lt, dur, t); fctx.restore(); continue; }
     // iOS-style zoom transition: outgoing scene grows + blurs away, incoming one settles in
     lctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -865,9 +1194,8 @@ function render(t) {
 }
 
 // ---------- soundtrack (synthesized, so it's free to use) ----------
-const CHIMES = [1.0, 18.2, 28.1, 33.5, 34.8, 44.0, 61.0];
-const WHOOSHES = [5.7, 12.7, 21.7, 32.7, 39.7, 48.7, 54.7, 60.7];
 function buildAudio(ac, t0 = 0) {
+  const A = CUT.audio;
   const out = ac.createDynamicsCompressor();
   out.threshold.value = -14; out.ratio.value = 3;
   const master = ac.createGain();
@@ -888,23 +1216,23 @@ function buildAudio(ac, t0 = 0) {
   padFilter.type = 'lowpass'; padFilter.frequency.value = 1100; padFilter.Q.value = 0.4;
   const padGain = ac.createGain(); padGain.gain.value = 0.5;
   padFilter.connect(padGain); padGain.connect(master);
-  for (let start = 0, i = 0; start < DURATION; start += 4, i++) {
+  for (let start = 0, i = 0; start < DURATION; start += A.chord, i++) {
     for (const f of chords[i % 4]) {
       for (const det of [-7, 7]) {
         const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det;
         const g = ac.createGain();
-        const a = t0 + start, b = t0 + Math.min(DURATION, start + 4.8);
+        const a = t0 + start, b = t0 + Math.min(DURATION, start + A.chord * 1.2);
         g.gain.setValueAtTime(0.0001, a);
-        g.gain.linearRampToValueAtTime(0.014, a + 1.0);
-        g.gain.setValueAtTime(0.014, b - 1.4);
+        g.gain.linearRampToValueAtTime(0.014, a + A.chord * 0.25);
+        g.gain.setValueAtTime(0.014, b - A.chord * 0.35);
         g.gain.linearRampToValueAtTime(0.0001, b);
         o.connect(g); g.connect(padFilter);
         o.start(a); o.stop(b + 0.05);
       }
     }
   }
-  // soft pulse (100 bpm) through the middle
-  for (let t = 6.0; t < 58.5; t += 0.6) {
+  // soft pulse through the middle
+  for (let t = A.pulseFrom; t < A.pulseTo; t += A.pulseEvery) {
     const o = ac.createOscillator(); o.type = 'sine';
     const g = ac.createGain();
     o.frequency.setValueAtTime(110, t0 + t); o.frequency.exponentialRampToValueAtTime(42, t0 + t + 0.14);
@@ -916,7 +1244,7 @@ function buildAudio(ac, t0 = 0) {
   const noise = ac.createBuffer(1, ac.sampleRate * 1.2, ac.sampleRate);
   const nd = noise.getChannelData(0); const rnd = rand(3);
   for (let i = 0; i < nd.length; i++) nd[i] = rnd() * 2 - 1;
-  for (const t of WHOOSHES) {
+  for (const t of A.whooshes) {
     const src = ac.createBufferSource(); src.buffer = noise;
     const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
     bp.frequency.setValueAtTime(350, t0 + t - 0.35); bp.frequency.exponentialRampToValueAtTime(3200, t0 + t + 0.45);
@@ -926,7 +1254,7 @@ function buildAudio(ac, t0 = 0) {
     src.connect(bp); bp.connect(g); g.connect(master); src.start(t0 + t - 0.35); src.stop(t0 + t + 0.7);
   }
   // chimes on key moments (paired, received, notifications)
-  for (const t of CHIMES) {
+  for (const t of A.chimes) {
     [[880, 0, 0.12], [1318.5, 0.09, 0.1], [2637, 0.09, 0.025]].forEach(([f, d, v]) => {
       const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = f;
       const g = ac.createGain();
@@ -935,22 +1263,19 @@ function buildAudio(ac, t0 = 0) {
       o.connect(g); g.connect(master); o.start(t0 + t + d); o.stop(t0 + t + d + 1.4);
     });
   }
-  // typing ticks (pairing digits, split-flap, terminal)
-  const ticks = [];
-  for (let i = 0; i < 6; i++) ticks.push(12.7 + 3.1 + i * 0.22);
-  for (let i = 0; i < 9; i++) ticks.push(39.7 + 1.9 + 2.4 + i * 0.13);
-  for (let t = 55.5; t < 57.5; t += 0.045) ticks.push(t);
-  for (const t of ticks) {
+  // typing ticks (pairing digits, split-flap, terminal) and cursor clicks
+  const tick = (t, gain, freq, len) => {
     const src = ac.createBufferSource(); src.buffer = noise;
-    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3500;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = freq;
     const g = ac.createGain();
-    g.gain.setValueAtTime(0.05, t0 + t); g.gain.exponentialRampToValueAtTime(0.0001, t0 + t + 0.03);
-    src.connect(hp); hp.connect(g); g.connect(master); src.start(t0 + t, rnd() * 0.5); src.stop(t0 + t + 0.04);
-  }
+    g.gain.setValueAtTime(gain, t0 + t); g.gain.exponentialRampToValueAtTime(0.0001, t0 + t + len);
+    src.connect(hp); hp.connect(g); g.connect(master); src.start(t0 + t, rnd() * 0.5); src.stop(t0 + t + len + 0.01);
+  };
+  for (const t of A.ticks) tick(t, 0.05, 3500, 0.03);
+  for (const t of A.clicks) { tick(t, 0.22, 1800, 0.025); tick(t + 0.09, 0.12, 2400, 0.02); }
 }
 
 // ---------- modes ----------
-const params = new URLSearchParams(location.search);
 const report = msg => fetch('/log', { method: 'POST', body: String(msg) }).catch(() => {});
 
 async function exportVideo() {

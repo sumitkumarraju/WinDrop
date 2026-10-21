@@ -13,9 +13,9 @@ Tap, send, done — photos, videos, ZIP, RAR, anything, any size. No cables, no 
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-30d158)](package.json)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-<a href="docs/windrop-explainer.mp4"><img src="docs/screens/hero.jpg" alt="Watch the WinDrop explainer video" width="820"></a>
+<a href="docs/windrop-15s.mp4"><img src="docs/screens/hero.jpg" alt="Watch the 15-second WinDrop video" width="820"></a>
 
-▶ **[Watch the 1-minute explainer](docs/windrop-explainer.mp4)**
+▶ **[Watch the 15-second demo](docs/windrop-15s.mp4)** · [full 1-minute explainer](docs/windrop-explainer.mp4)
 
 </div>
 
@@ -298,7 +298,8 @@ WinDrop/
 │   ├── set-app-id.ps1      gives the Start menu shortcut its AppUserModelID
 │   └── make-icons.ps1      regenerates the PNG / ICO icons
 ├── docs/
-│   ├── windrop-explainer.mp4
+│   ├── windrop-15s.mp4     15-second demo
+│   ├── windrop-explainer.mp4  full 1-minute explainer
 │   ├── screens/            README images
 │   └── video/explainer.html  source of the explainer video (plays in a browser)
 ├── install.ps1 · Install-WinDrop.bat
@@ -310,7 +311,11 @@ Not in the repository: `windrop.config.json` (this PC's paired devices, room cod
 
 ### The explainer video
 
-`docs/video/explainer.html` is a code-driven motion-graphics film: kinetic typography, iOS-style zoom transitions, spring physics and the ripple shader, with a synthesized soundtrack. Open it in Edge or Chrome and click **Play with sound**. Adding `?export=1` renders every frame and encodes H.264 + AAC with WebCodecs — that's how `windrop-explainer.mp4` was made.
+`docs/video/explainer.html` is a code-driven motion-graphics film: kinetic typography, iOS-style zoom transitions, spring physics and the ripple shader, with a synthesized soundtrack. Open it in Edge or Chrome and click **Play with sound**.
+
+- `explainer.html` — the full 66-second explainer
+- `explainer.html?cut=15` — the fast 15-second cut, with Screen-Studio-style camera zooms and an animated cursor that hovers and clicks
+- add `&export=1` to render every frame and encode H.264 + AAC with WebCodecs — that's how the MP4s in `docs/` were made
 
 ## Contributing
 
