@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WinDrop — explainer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { display: grid; place-items: center; font: 15px "Segoe UI", system-ui, sans-serif; color: #fff; }
+  canvas { width: min(100vw, 177.78vh); height: min(56.25vw, 100vh); display: block; }
+  #play {
+    position: fixed; inset: 0; margin: auto; width: 220px; height: 64px; border: 0; border-radius: 999px;
+    background: #0a84ff; color: #fff; font: 600 18px "Segoe UI", system-ui, sans-serif; cursor: pointer;
+    box-shadow: 0 12px 40px rgba(10,132,255,.5);
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<button id="play" hidden>▶ Play with sound</button>
+<script>
+// WinDrop explainer — a code-driven motion-graphics film.
+//   explainer.html            plays in the browser (click for sound)
+//   explainer.html?export=1   renders every frame and encodes H.264 + AAC with WebCodecs (used to make the MP4)
+//   explainer.html?snap=1,5   renders single frames to PNG for review
+// Everything is a pure function of time t, so preview and export look identical.
+
+const W = 1920, H = 1080, FPS = 30, DURATION = 66;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const frame = new OffscreenCanvas(W, H), fctx = frame.getContext('2d');
+const layer = new OffscreenCanvas(W, H), lctx = layer.getContext('2d');
+
+const FONT = '"Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif';
+const MONO = '"Cascadia Mono", Consolas, monospace';
+const C = {
+  white: '#f5f7fb', muted: '#97a3ba', blue: '#0a84ff', sky: '#64d2ff', green: '#30d158',
+  glass: 'rgba(255,255,255,0.07)', line: 'rgba(255,255,255,0.14)',
+};
+
+// ---------- easing ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, k) => a + (b - a) * k;
+const ease = {
+  outExpo: x => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x)),
+  outCubic: x => 1 - Math.pow(1 - x, 3),
+  inCubic: x => x * x * x,
+  inOut: x => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2),
+  // damped spring — overshoots a little and settles, like UIKit's spring animations
+  spring: x => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.exp(-6.5 * x) * Math.cos(10.5 * x)),
+};
+function rand(seed) { // mulberry32
+  return () => {
+    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------- icons (Lucide paths) ----------
+const ICONS = {
+  logo: 'M12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4zM16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14',
+  check: 'M20 6 9 17l-5-5',
+  lock: 'M7 11V7a5 5 0 0 1 10 0v4M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z',
+  wifi: 'M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.86a10 10 0 0 1 14 0M8.5 16.43a5 5 0 0 1 7 0',
+  globe: 'M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10a15.3 15.3 0 0 1-4 10a15.3 15.3 0 0 1-4-10a15.3 15.3 0 0 1 4-10z',
+  bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0',
+  power: 'M12 2v10M18.4 6.6a9 9 0 1 1-12.77.04',
+  refresh: 'M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5',
+  image: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 7a2 2 0 1 0 0 4a2 2 0 1 0 0-4zM21 15l-3.09-3.09a2 2 0 0 0-2.82 0L6 21',
+  video: 'm16 13 5.22 3.48a.5.5 0 0 0 .78-.42V7.94a.5.5 0 0 0-.76-.43L16 10.5M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z',
+  archive: 'M3 3h18a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4',
+  file: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7ZM14 2v4a2 2 0 0 0 2 2h4',
+  laptop: 'M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16',
+  phone: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM12 18h.01',
+  send: 'M12 19V5M5 12l7-7 7 7',
+};
+const iconCache = {};
+function icon(c, name, cx, cy, size, color, lw = 1.8) {
+  const p = iconCache[name] || (iconCache[name] = new Path2D(ICONS[name]));
+  c.save();
+  c.translate(cx - size / 2, cy - size / 2);
+  c.scale(size / 24, size / 24);
+  c.lineWidth = lw; c.lineCap = 'round'; c.lineJoin = 'round';
+  c.strokeStyle = color;
+  c.stroke(p);
+  c.restore();
+}
+
+// ---------- drawing helpers ----------
+function rr(c, x, y, w, h, r) { c.beginPath(); c.roundRect(x, y, w, h, r); }
+
+function glass(c, x, y, w, h, r, { fill = C.glass, line = C.line, shadow = 1 } = {}) {
+  c.save();
+  if (shadow) { c.shadowColor = `rgba(0,0,0,${0.45 * shadow})`; c.shadowBlur = 60; c.shadowOffsetY = 22; }
+  rr(c, x, y, w, h, r); c.fillStyle = fill; c.fill();
+  c.shadowColor = 'transparent';
+  c.lineWidth = 1.5; c.strokeStyle = line; c.stroke();
+  c.restore();
+}
+
+function text(c, str, x, y, { size = 48, weight = 600, color = C.white, align = 'center', alpha = 1, font = FONT, spacing = 0 } = {}) {
+  c.save();
+  c.globalAlpha *= alpha;
+  c.font = `${weight} ${size}px ${font}`;
+  c.letterSpacing = `${spacing}px`;
+  c.textAlign = align; c.textBaseline = 'alphabetic';
+  c.fillStyle = color;
+  c.fillText(str, x, y);
+  c.restore();
+}
+
+function blueGradient(c, x0, x1) {
+  const g = c.createLinearGradient(x0, 0, x1, 0);
+  g.addColorStop(0, '#64d2ff'); g.addColorStop(1, '#0a84ff');
+  return g;
+}
+
+// Words rise in one after another: blur + slide + spring scale (the keynote look).
+function kinetic(c, words, cx, y, t, { size = 96, weight = 700, gap = 0.11, color = C.white, accent = [], align = 'center', spacing = -2 } = {}) {
+  if (t <= 0) return;
+  c.save();
+  c.font = `${weight} ${size}px ${FONT}`;
+  c.letterSpacing = `${spacing}px`;
+  const widths = words.map(w => c.measureText(w).width);
+  const space = size * 0.26;
+  const total = widths.reduce((a, b) => a + b, 0) + space * (words.length - 1);
+  let x = align === 'center' ? cx - total / 2 : cx;
+  words.forEach((w, i) => {
+    const k = clamp((t - i * gap) / 0.75);
+    if (k > 0) {
+      const e = ease.outExpo(k), s = ease.spring(k);
+      c.save();
+      c.globalAlpha *= e;
+      if (e < 0.98) c.filter = `blur(${(1 - e) * 16}px)`;
+      c.translate(x + widths[i] / 2, y + (1 - e) * size * 0.6);
+      c.scale(0.85 + 0.15 * s, 0.85 + 0.15 * s);
+      c.textAlign = 'center';
+      c.fillStyle = accent.includes(i) ? blueGradient(c, -widths[i] / 2, widths[i] / 2) : color;
+      c.fillText(w, 0, 0);
+      c.restore();
+    }
+    x += widths[i] + space;
+  });
+  c.restore();
+}
+
+// Letters drop in one by one with a spring.
+function letters(c, str, cx, y, t, { size = 140, weight = 700, stagger = 0.045, spacing = -3 } = {}) {
+  if (t <= 0) return;
+  c.save();
+  c.font = `${weight} ${size}px ${FONT}`;
+  c.letterSpacing = `${spacing}px`;
+  const chars = [...str];
+  const widths = chars.map(ch => c.measureText(ch).width);
+  const total = widths.reduce((a, b) => a + b, 0);
+  let x = cx - total / 2;
+  chars.forEach((ch, i) => {
+    const k = clamp((t - i * stagger) / 0.8);
+    if (k > 0) {
+      const e = ease.outExpo(k), s = ease.spring(k);
+      c.save();
+      c.globalAlpha *= e;
+      if (e < 0.98) c.filter = `blur(${(1 - e) * 12}px)`;
+      c.translate(x + widths[i] / 2, y + (1 - s) * 90);
+      c.textAlign = 'center';
+      c.fillStyle = C.white;
+      c.fillText(ch, 0, 0);
+      c.restore();
+    }
+    x += widths[i];
+  });
+  c.restore();
+}
+
+function fadeUp(c, t, fn, dist = 30) {
+  if (t <= 0) return;
+  const e = ease.outCubic(clamp(t / 0.6));
+  c.save();
+  c.globalAlpha *= e;
+  c.translate(0, (1 - e) * dist);
+  fn();
+  c.restore();
+}
+
+function chip(c, label, cx, cy, t, { color = C.white, iconName = 'check', iconColor = C.green } = {}) {
+  if (t <= 0) return;
+  const s = ease.spring(clamp(t / 0.7)), e = ease.outCubic(clamp(t / 0.4));
+  c.save();
+  c.font = `600 30px ${FONT}`;
+  const w = c.measureText(label).width + 100;
+  c.globalAlpha *= e;
+  c.translate(cx, cy);
+  c.scale(0.7 + 0.3 * s, 0.7 + 0.3 * s);
+  glass(c, -w / 2, -34, w, 68, 34, { shadow: 0.5 });
+  icon(c, iconName, -w / 2 + 40, 0, 28, iconColor, 2.4);
+  c.fillStyle = color; c.textAlign = 'left'; c.textBaseline = 'middle';
+  c.fillText(label, -w / 2 + 66, 2);
+  c.restore();
+}
+
+function chipRow(c, labels, cy, t, gap = 0.18, opts) {
+  c.save();
+  c.font = `600 30px ${FONT}`;
+  const widths = labels.map(l => c.measureText(l).width + 100);
+  c.restore();
+  const total = widths.reduce((a, b) => a + b, 0) + 28 * (labels.length - 1);
+  let x = W / 2 - total / 2;
+  labels.forEach((l, i) => { chip(c, l, x + widths[i] / 2, cy, t - i * gap, opts); x += widths[i] + 28; });
+}
+
+function waves(c, cx, cy, base, t, { period = 2.6, count = 4, color = '10,132,255', max = 3.2, alpha = 0.5 } = {}) {
+  for (let i = 0; i < count; i++) {
+    const k = ((t / period) + i / count) % 1;
+    const r = base * (1 + (max - 1) * ease.outCubic(k));
+    c.save();
+    c.globalAlpha *= (1 - k) * alpha;
+    c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.lineWidth = 2; c.strokeStyle = `rgba(${color},1)`; c.stroke();
+    const g = c.createRadialGradient(cx, cy, r * 0.6, cx, cy, r);
+    g.addColorStop(0, `rgba(${color},0)`); g.addColorStop(1, `rgba(${color},0.18)`);
+    c.fillStyle = g; c.fill();
+    c.restore();
+  }
+}
+
+function appTile(c, cx, cy, size, t = 1) {
+  const s = ease.spring(clamp(t));
+  if (s <= 0) return;
+  c.save();
+  c.translate(cx, cy); c.scale(s, s);
+  c.shadowColor = 'rgba(10,110,255,0.55)'; c.shadowBlur = size * 0.45; c.shadowOffsetY = size * 0.12;
+  const g = c.createLinearGradient(-size / 2, -size / 2, size / 2, size / 2);
+  g.addColorStop(0, '#3a9bff'); g.addColorStop(1, '#0060d0');
+  rr(c, -size / 2, -size / 2, size, size, size * 0.23); c.fillStyle = g; c.fill();
+  c.shadowColor = 'transparent';
+  rr(c, -size / 2, -size / 2, size, size, size * 0.23); c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 2; c.stroke();
+  icon(c, 'logo', 0, 0, size * 0.62, '#fff', 2.2);
+  c.restore();
+}
+
+function avatar(c, cx, cy, r, name, { ring = -1, ok = false, fill } = {}) {
+  c.save();
+  const g = c.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+  g.addColorStop(0, ok ? '#5be37d' : '#3a9bff'); g.addColorStop(1, ok ? '#1f9d47' : '#0060d0');
+  c.shadowColor = ok ? 'rgba(48,209,88,0.5)' : 'rgba(10,110,255,0.5)'; c.shadowBlur = r * 0.8;
+  c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.fillStyle = fill || g; c.fill();
+  c.shadowColor = 'transparent';
+  icon(c, ok ? 'check' : name, cx, cy, r * 0.95, '#fff', ok ? 2.6 : 1.7);
+  if (ring >= 0) {
+    c.lineCap = 'round';
+    c.beginPath(); c.arc(cx, cy, r + 10, 0, Math.PI * 2); c.strokeStyle = 'rgba(255,255,255,0.12)'; c.lineWidth = 5; c.stroke();
+    c.beginPath(); c.arc(cx, cy, r + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ring); c.strokeStyle = ok ? C.green : C.sky; c.stroke();
+  }
+  c.restore();
+}
+
+function bar(c, x, y, w, k, color = C.blue) {
+  rr(c, x, y, w, 8, 4); c.fillStyle = 'rgba(255,255,255,0.1)'; c.fill();
+  if (k > 0) { rr(c, x, y, Math.max(8, w * k), 8, 4); c.fillStyle = color; c.fill(); }
+}
+
+function qr(c, x, y, size, seed = 7) {
+  const n = 25, m = size / n, rnd = rand(seed);
+  c.save();
+  rr(c, x - 14, y - 14, size + 28, size + 28, 18); c.fillStyle = '#fff'; c.fill();
+  c.fillStyle = '#0b1220';
+  const finder = (fx, fy) => {
+    c.fillRect(x + fx * m, y + fy * m, 7 * m, 7 * m);
+    c.fillStyle = '#fff'; c.fillRect(x + (fx + 1) * m, y + (fy + 1) * m, 5 * m, 5 * m);
+    c.fillStyle = '#0b1220'; c.fillRect(x + (fx + 2) * m, y + (fy + 2) * m, 3 * m, 3 * m);
+  };
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const inFinder = (i < 8 && j < 8) || (i > n - 9 && j < 8) || (i < 8 && j > n - 9);
+    if (!inFinder && rnd() > 0.52) c.fillRect(x + i * m, y + j * m, m + 0.5, m + 0.5);
+  }
+  finder(0, 0); finder(n - 7, 0); finder(0, n - 7);
+  c.restore();
+}
+
+// ---------- devices ----------
+function phone(c, x, y, scale, drawScreen, { alpha = 1 } = {}) {
+  const w = 330, h = 680, r = 58;
+  c.save();
+  c.globalAlpha *= alpha;
+  c.translate(x, y); c.scale(scale, scale);
+  c.shadowColor = 'rgba(0,0,0,0.6)'; c.shadowBlur = 80; c.shadowOffsetY = 40;
+  rr(c, -w / 2, -h / 2, w, h, r); c.fillStyle = '#0b0f19'; c.fill();
+  c.shadowColor = 'transparent';
+  c.lineWidth = 4; c.strokeStyle = 'rgba(255,255,255,0.22)'; c.stroke();
+  c.save();
+  rr(c, -w / 2 + 12, -h / 2 + 12, w - 24, h - 24, r - 12); c.clip();
+  const g = c.createLinearGradient(0, -h / 2, 0, h / 2);
+  g.addColorStop(0, '#0d1a33'); g.addColorStop(1, '#05070d');
+  c.fillStyle = g; c.fillRect(-w / 2, -h / 2, w, h);
+  c.translate(-w / 2 + 12, -h / 2 + 12);
+  drawScreen(c, w - 24, h - 24);
+  c.restore();
+  rr(c, -52, -h / 2 + 26, 104, 30, 15); c.fillStyle = '#000'; c.fill();
+  c.restore();
+}
+
+function laptop(c, x, y, scale, drawScreen) {
+  const sw = 800, sh = 500;
+  c.save();
+  c.translate(x, y); c.scale(scale, scale);
+  c.shadowColor = 'rgba(0,0,0,0.55)'; c.shadowBlur = 90; c.shadowOffsetY = 40;
+  rr(c, -sw / 2 - 18, -sh / 2 - 18, sw + 36, sh + 36, 26); c.fillStyle = '#0b0f19'; c.fill();
+  c.shadowColor = 'transparent';
+  c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,0.2)'; c.stroke();
+  // base
+  c.beginPath();
+  c.moveTo(-sw / 2 - 60, sh / 2 + 18); c.lineTo(sw / 2 + 60, sh / 2 + 18);
+  c.lineTo(sw / 2 + 110, sh / 2 + 48); c.quadraticCurveTo(sw / 2 + 110, sh / 2 + 60, sw / 2 + 90, sh / 2 + 60);
+  c.lineTo(-sw / 2 - 90, sh / 2 + 60); c.quadraticCurveTo(-sw / 2 - 110, sh / 2 + 60, -sw / 2 - 110, sh / 2 + 48);
+  c.closePath();
+  const bg = c.createLinearGradient(0, sh / 2 + 18, 0, sh / 2 + 60);
+  bg.addColorStop(0, '#2a3142'); bg.addColorStop(1, '#141924');
+  c.fillStyle = bg; c.fill();
+  c.save();
+  rr(c, -sw / 2, -sh / 2, sw, sh, 10); c.clip();
+  const g = c.createLinearGradient(0, -sh / 2, 0, sh / 2);
+  g.addColorStop(0, '#0e1a30'); g.addColorStop(1, '#060a14');
+  c.fillStyle = g; c.fillRect(-sw / 2, -sh / 2, sw, sh);
+  c.translate(-sw / 2, -sh / 2);
+  drawScreen(c, sw, sh);
+  c.restore();
+  c.restore();
+}
+
+function miniHeader(c, w, label = 'WinDrop', top = 0) {
+  appTile(c, 34, 34 + top, 30);
+  text(c, label, 58, 44 + top, { size: 22, weight: 700, align: 'left' });
+}
+
+// ---------- background ----------
+function background(c, t) {
+  const g = c.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#070b18'); g.addColorStop(1, '#020309');
+  c.fillStyle = g; c.fillRect(0, 0, W, H);
+  const blobs = [
+    [0.22, 0.28, 780, '10,132,255', 0.24, 0.07],
+    [0.8, 0.72, 720, '100,210,255', 0.14, 0.05],
+    [0.62, 0.15, 520, '48,209,88', 0.06, 0.09],
+  ];
+  for (const [bx, by, r, col, a, sp] of blobs) {
+    const x = W * bx + Math.sin(t * sp * 6) * 120, y = H * by + Math.cos(t * sp * 5) * 90;
+    const rg = c.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, `rgba(${col},${a})`); rg.addColorStop(1, `rgba(${col},0)`);
+    c.fillStyle = rg; c.fillRect(0, 0, W, H);
+  }
+}
+
+// ---------- scenes ----------
+function sIntro(c, lt) {
+  const cx = 960, cy = 420;
+  waves(c, cx, cy, 120, lt, { alpha: 0.6 * prog(lt, 0, 0.6) });
+  appTile(c, cx, cy, 220, prog(lt, 0.15, 1.25));
+  letters(c, 'WinDrop', cx, 720, lt - 1.1, { size: 150 });
+  fadeUp(c, lt - 2.1, () => text(c, 'AirDrop-style file sharing between iPhone and Windows', cx, 810, { size: 42, weight: 500, color: C.muted }));
+  chipRow(c, ['Free', 'Open source', 'No cables'], 920, lt - 2.9);
+}
+
+function sKinetic(c, lt) {
+  const seq = [['Photos.', 0.25], ['Videos.', 1.0], ['ZIPs.', 1.7], ['RARs.', 2.35]];
+  seq.forEach(([word, at], i) => {
+    const next = seq[i + 1] ? seq[i + 1][1] : 3.0;
+    const kin = clamp((lt - at) / 0.45), kout = clamp((lt - next) / 0.3);
+    if (kin <= 0 || kout >= 1) return;
+    const e = ease.outExpo(kin), o = ease.inCubic(kout);
+    c.save();
+    c.globalAlpha = e * (1 - o);
+    const blur = (1 - e) * 18 + o * 18;
+    if (blur > 0.3) c.filter = `blur(${blur}px)`;
+    c.translate(960, 600 + (1 - e) * 120 - o * 140);
+    const s = 0.8 + 0.2 * ease.spring(kin) + o * 0.1;
+    c.scale(s, s);
+    c.font = `800 230px ${FONT}`; c.letterSpacing = '-6px'; c.textAlign = 'center';
+    const w = c.measureText(word).width;
+    c.fillStyle = i % 2 ? blueGradient(c, -w / 2, w / 2) : C.white;
+    c.fillText(word, 0, 0);
+    c.restore();
+  });
+  // orbiting file tiles
+  const tiles = ['image', 'video', 'archive', 'file', 'image', 'archive'];
+  const ok = prog(lt, 3.0, 3.8);
+  tiles.forEach((name, i) => {
+    const a = i / tiles.length * Math.PI * 2 + lt * 0.35;
+    const R = lerp(200, 640, ease.outExpo(ok));
+    const x = 960 + Math.cos(a) * R * 1.25, y = 540 + Math.sin(a) * R * 0.62;
+    const s = ease.spring(prog(lt, 3.0 + i * 0.07, 3.8 + i * 0.07));
+    if (s <= 0) return;
+    c.save(); c.globalAlpha *= 0.85; c.translate(x, y); c.scale(s, s);
+    glass(c, -55, -55, 110, 110, 28, { shadow: 0.6 });
+    icon(c, name, 0, 0, 50, [C.sky, '#fdba74', '#fcd34d', '#93c5fd'][i % 4], 2);
+    c.restore();
+  });
+  kinetic(c, ['Any', 'file.'], 960, 500, lt - 3.0, { size: 170, weight: 800, spacing: -5 });
+  kinetic(c, ['Any', 'size.'], 960, 690, lt - 3.35, { size: 170, weight: 800, spacing: -5, accent: [1] });
+  fadeUp(c, lt - 4.4, () => text(c, 'Straight from your iPhone to your PC — over your own Wi-Fi.', 960, 840, { size: 40, weight: 500, color: C.muted }));
+}
+
+function pairLaptopScreen(c, w, h, lt) {
+  miniHeader(c, w);
+  qr(c, 70, 110, 220);
+  text(c, 'Connect your iPhone', 360, 140, { size: 30, weight: 700, align: 'left' });
+  text(c, '1  Scan this code', 360, 185, { size: 22, weight: 500, align: 'left', color: C.muted });
+  text(c, '2  Type the pairing code', 360, 220, { size: 22, weight: 500, align: 'left', color: C.muted });
+  glass(c, 360, 260, 380, 150, 18, { fill: 'rgba(10,132,255,0.14)', shadow: 0 });
+  text(c, 'PAIRING CODE', 385, 298, { size: 18, weight: 600, align: 'left', color: C.muted, spacing: 2 });
+  const code = '921066';
+  for (let i = 0; i < 6; i++) {
+    const k = prog(lt, 1.3 + i * 0.08, 1.9 + i * 0.08);
+    if (k <= 0) continue;
+    c.save();
+    c.globalAlpha *= ease.outCubic(k);
+    text(c, code[i], 395 + i * 52 + (i > 2 ? 22 : 0), 375 - (1 - ease.spring(k)) * 40, { size: 64, weight: 700, font: MONO, align: 'left' });
+    c.restore();
+  }
+  const left = 1 - prog(lt, 2.0, 9.5) * 0.4;
+  bar(c, 385, 392, 300, left, C.sky);
+}
+
+function pairPhoneScreen(c, w, h, lt) {
+  if (lt < 2.7) { // camera scanning the QR
+    c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+    qr(c, 63, 200, 180, 7);
+    const sy = 200 + (Math.sin(lt * 3.4) * 0.5 + 0.5) * 180;
+    const g = c.createLinearGradient(0, sy - 30, 0, sy + 4);
+    g.addColorStop(0, 'rgba(100,210,255,0)'); g.addColorStop(1, 'rgba(100,210,255,0.9)');
+    c.fillStyle = g; c.fillRect(40, sy - 30, w - 80, 34);
+    c.strokeStyle = '#ffd60a'; c.lineWidth = 5; c.lineCap = 'round';
+    for (const [x, y, dx, dy] of [[40, 176, 1, 1], [w - 40, 176, -1, 1], [40, 404, 1, -1], [w - 40, 404, -1, -1]]) {
+      c.beginPath(); c.moveTo(x, y + dy * 40); c.lineTo(x, y); c.lineTo(x + dx * 40, y); c.stroke();
+    }
+    fadeUp(c, lt - 1.6, () => {
+      glass(c, 30, 470, w - 60, 70, 20, { fill: 'rgba(255,255,255,0.14)', shadow: 0 });
+      text(c, 'Open WinDrop', w / 2, 514, { size: 24, weight: 600 });
+    }, 12);
+    return;
+  }
+  const paired = lt >= 5.5;
+  if (!paired) {
+    const e = ease.outCubic(prog(lt, 2.7, 3.2));
+    c.save(); c.globalAlpha *= e;
+    appTile(c, w / 2, 150, 84);
+    text(c, 'Pair with your PC', w / 2, 250, { size: 30, weight: 700 });
+    text(c, 'Type the code shown on your PC', w / 2, 290, { size: 18, weight: 500, color: C.muted });
+    glass(c, 26, 330, w - 52, 84, 20, { fill: 'rgba(255,255,255,0.06)', shadow: 0, line: 'rgba(100,210,255,0.6)' });
+    const code = '921066';
+    for (let i = 0; i < 6; i++) {
+      const k = prog(lt, 3.1 + i * 0.22, 3.3 + i * 0.22);
+      const x = 53 + i * 32 + (i > 2 ? 16 : 0);
+      if (k <= 0) { text(c, '0', x, 388, { size: 40, weight: 600, font: MONO, color: 'rgba(255,255,255,0.18)', align: 'left' }); continue; }
+      c.save(); c.globalAlpha *= k;
+      text(c, code[i], x, 388 - (1 - ease.spring(k)) * 16, { size: 40, weight: 700, font: MONO, align: 'left' });
+      c.restore();
+    }
+    rr(c, 26, 440, w - 52, 64, 18); c.fillStyle = C.blue; c.fill();
+    text(c, 'Pair', w / 2, 481, { size: 24, weight: 600 });
+    c.restore();
+    return;
+  }
+  const k = prog(lt, 5.5, 6.3);
+  waves(c, w / 2, 260, 70, lt, { color: '48,209,88', alpha: 0.5 });
+  c.save();
+  c.translate(w / 2, 260); const s = ease.spring(k); c.scale(s, s);
+  avatar(c, 0, 0, 70, 'check', { ok: true });
+  c.restore();
+  fadeUp(c, lt - 5.8, () => {
+    text(c, 'Paired', w / 2, 410, { size: 40, weight: 700 });
+    text(c, 'Connects by itself from now on', w / 2, 450, { size: 19, weight: 500, color: C.muted });
+  }, 16);
+}
+
+function sPair(c, lt) {
+  kinetic(c, ['Pair', 'once.', 'Securely.'], 960, 150, lt - 0.15, { size: 76, accent: [2] });
+  const px = lerp(-300, 600, ease.spring(prog(lt, 0.05, 1.2)));
+  const lx = lerp(2300, 1300, ease.spring(prog(lt, 0.15, 1.3)));
+  if (lt > 5.5) { // a glowing link once paired
+    const k = ease.outCubic(prog(lt, 5.5, 6.3));
+    c.save();
+    c.globalAlpha *= k;
+    c.setLineDash([2, 18]); c.lineCap = 'round'; c.lineWidth = 6;
+    c.strokeStyle = C.green;
+    c.lineDashOffset = -lt * 60;
+    c.beginPath(); c.moveTo(740, 560); c.quadraticCurveTo(900, 470, 1000, 540); c.stroke();
+    c.restore();
+  }
+  laptop(c, lx, 560, 0.86, (cc, w, h) => pairLaptopScreen(cc, w, h, lt));
+  phone(c, px, 590, 0.86, (cc, w, h) => pairPhoneScreen(cc, w, h, lt));
+  fadeUp(c, lt - 6.0, () => text(c, 'A fresh 6-digit code every 2 minutes — strangers can’t send you anything.', 960, 1010, { size: 34, weight: 500, color: C.muted }));
+}
+
+const SEND_FILES = [
+  ['video', 'IMG_4021.MOV', '1.2 GB'],
+  ['archive', 'Project backup.rar', '640 MB'],
+  ['image', 'Holiday photos.zip', '310 MB'],
+];
+const fileProg = (lt, i) => ease.inOut(prog(lt, 1.8 + i * 0.85, 4.6 + i * 0.85));
+
+function sendPhoneScreen(c, w, h, lt) {
+  miniHeader(c, w, 'WinDrop', 42); // below the Dynamic Island
+  rr(c, w - 128, 60, 108, 34, 17); c.fillStyle = 'rgba(48,209,88,0.15)'; c.fill();
+  text(c, '● Connected', w - 74, 84, { size: 16, weight: 600, color: C.green });
+  const busy = lt > 1.6 && lt < 6.6;
+  waves(c, w / 2, 210, 56, lt, { period: busy ? 1.2 : 2.6, alpha: 0.55 });
+  const total = SEND_FILES.reduce((s, _, i) => s + fileProg(lt, i), 0) / SEND_FILES.length;
+  avatar(c, w / 2, 210, 56, 'laptop', { ring: busy || total >= 1 ? total : -1, ok: total >= 1 && lt > 6.6 });
+  if (lt > 1.1 && lt < 1.7) { // tap
+    const k = prog(lt, 1.1, 1.7);
+    c.save(); c.globalAlpha *= 1 - k;
+    c.beginPath(); c.arc(w / 2 + 20, 230, 20 + k * 60, 0, Math.PI * 2); c.fillStyle = 'rgba(255,255,255,0.35)'; c.fill();
+    c.restore();
+  }
+  text(c, total >= 1 ? 'Sent to SKR' : busy ? 'Sending to SKR' : 'SKR', w / 2, 320, { size: 26, weight: 700 });
+  SEND_FILES.forEach(([ic, name, size], i) => {
+    const t = lt - 1.3 - i * 0.12;
+    fadeUp(c, t, () => {
+      const y = 360 + i * 82;
+      glass(c, 14, y, w - 28, 72, 18, { shadow: 0 });
+      rr(c, 26, y + 14, 44, 44, 12); c.fillStyle = 'rgba(100,210,255,0.14)'; c.fill();
+      icon(c, ic, 48, y + 36, 24, C.sky, 2);
+      text(c, name, 84, y + 32, { size: 17, weight: 600, align: 'left' });
+      const k = fileProg(lt, i);
+      text(c, k >= 1 ? `✓ Sent · ${size}` : `${Math.round(k * 100)}% of ${size}`, 84, y + 54, { size: 14, weight: 500, align: 'left', color: k >= 1 ? C.green : C.muted });
+      if (k < 1) bar(c, 200, y + 46, w - 230, k);
+    }, 20);
+  });
+}
+
+function sendLaptopScreen(c, w, h, lt) {
+  miniHeader(c, w);
+  const busy = lt > 1.8 && lt < 6.5;
+  waves(c, 300, 230, 60, lt, { period: busy ? 1.2 : 2.6, alpha: 0.5 });
+  avatar(c, 300, 230, 60, 'laptop');
+  const total = SEND_FILES.reduce((s, _, i) => s + fileProg(lt, i), 0) / SEND_FILES.length;
+  c.save();
+  c.translate(130, 160);
+  c.beginPath(); c.arc(0, 0, 40, 0, Math.PI * 2); c.fillStyle = 'rgba(255,255,255,0.08)'; c.fill();
+  icon(c, 'phone', 0, 0, 34, C.sky, 1.8);
+  c.lineCap = 'round'; c.lineWidth = 5;
+  if (lt > 1.8) {
+    c.beginPath(); c.arc(0, 0, 48, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * total);
+    c.strokeStyle = total >= 1 ? C.green : C.sky; c.stroke();
+  }
+  text(c, 'iPhone', 0, 82, { size: 18, weight: 600 });
+  c.restore();
+  text(c, 'SKR', 300, 340, { size: 28, weight: 700 });
+  text(c, total >= 1 ? 'Received 3 files' : busy ? 'Receiving from iPhone…' : 'Waiting for your iPhone', 300, 372, { size: 18, weight: 500, color: C.muted });
+  // received list
+  glass(c, 540, 90, 240, 380, 18, { shadow: 0 });
+  text(c, 'Received', 560, 128, { size: 20, weight: 700, align: 'left' });
+  SEND_FILES.forEach(([ic, name], i) => {
+    if (fileProg(lt, i) < 1) return;
+    fadeUp(c, lt - (4.6 + i * 0.85), () => {
+      const y = 150 + i * 64;
+      icon(c, ic, 578, y + 24, 24, C.sky, 2);
+      text(c, name.length > 16 ? name.slice(0, 15) + '…' : name, 600, y + 30, { size: 15, weight: 600, align: 'left' });
+    }, 14);
+  });
+  // toast
+  if (lt > 6.4) {
+    const k = ease.spring(prog(lt, 6.4, 7.3));
+    c.save();
+    c.translate(0, (1 - k) * 120);
+    c.globalAlpha *= clamp(k * 2);
+    glass(c, 60, 410, 450, 70, 16, { fill: 'rgba(30,38,56,0.95)' });
+    icon(c, 'check', 96, 445, 26, C.green, 2.6);
+    text(c, 'Received IMG_4021.MOV from iPhone', 124, 452, { size: 18, weight: 600, align: 'left' });
+    c.restore();
+  }
+}
+
+function sSend(c, lt) {
+  kinetic(c, ['Send', 'anything.', 'Any', 'size.'], 960, 150, lt - 0.15, { size: 76, accent: [3] });
+  laptop(c, 1300, 560, 0.86, (cc, w, h) => sendLaptopScreen(cc, w, h, lt));
+  phone(c, 560, 590, 0.86, (cc, w, h) => sendPhoneScreen(cc, w, h, lt));
+  // files flying from the phone to the PC
+  SEND_FILES.forEach(([ic], i) => {
+    for (let k = 0; k < 4; k++) {
+      const start = 1.9 + i * 0.85 + k * 0.62;
+      const p = prog(lt, start, start + 0.95);
+      if (p <= 0 || p >= 1 || start > 4.6 + i * 0.85) continue;
+      const e = ease.inOut(p);
+      const x0 = 560, y0 = 490, x1 = 1214, y1 = 543; // phone's PC icon -> PC's own icon
+      const x = lerp(x0, x1, e), y = lerp(y0, y1, e) - Math.sin(e * Math.PI) * 230;
+      const s = 0.6 + Math.sin(e * Math.PI) * 0.6;
+      c.save();
+      c.globalAlpha *= Math.sin(p * Math.PI);
+      c.shadowColor = 'rgba(100,210,255,0.8)'; c.shadowBlur = 40;
+      c.translate(x, y); c.scale(s, s); c.rotate((e - 0.5) * 0.5);
+      glass(c, -42, -42, 84, 84, 22, { fill: 'rgba(20,40,80,0.9)', line: 'rgba(100,210,255,0.6)', shadow: 0 });
+      icon(c, ic, 0, 0, 40, C.sky, 2.2);
+      c.restore();
+    }
+  });
+  chipRow(c, ['Resumes if Wi-Fi drops', 'Full quality', 'Up to Wi-Fi speed'], 1010, lt - 7.0);
+}
+
+function sNotify(c, lt) {
+  kinetic(c, ['Notified.'], 385, 470, lt - 0.1, { size: 124, weight: 800, spacing: -4 });
+  kinetic(c, ['Both', 'ways.'], 385, 620, lt - 0.45, { size: 124, weight: 800, spacing: -4, accent: [1] });
+  fadeUp(c, lt - 1.2, () => {
+    text(c, 'Windows notification with', 385, 730, { size: 32, weight: 500, color: C.muted });
+    text(c, 'Open · Show in folder', 385, 772, { size: 32, weight: 600, color: C.white });
+    text(c, 'iPhone banner with a chime', 385, 838, { size: 32, weight: 500, color: C.muted });
+  });
+  // Windows desktop
+  const k = ease.spring(prog(lt, 0.1, 1.0));
+  c.save();
+  c.globalAlpha *= clamp(k * 1.5);
+  c.translate(0, (1 - k) * 60);
+  const dx = 760, dw = 820; // Windows desktop
+  c.save();
+  rr(c, dx, 200, dw, 600, 24); c.clip();
+  const wall = c.createLinearGradient(dx, 200, dx + dw, 800);
+  wall.addColorStop(0, '#1b3a7a'); wall.addColorStop(0.5, '#0d1f45'); wall.addColorStop(1, '#2a1b55');
+  c.fillStyle = wall; c.fillRect(dx, 200, dw, 600);
+  const bloom = c.createRadialGradient(dx + dw / 2, 640, 10, dx + dw / 2, 640, 420);
+  bloom.addColorStop(0, 'rgba(100,180,255,0.45)'); bloom.addColorStop(1, 'rgba(100,180,255,0)');
+  c.fillStyle = bloom; c.fillRect(dx, 200, dw, 600);
+  c.fillStyle = 'rgba(15,20,32,0.85)'; c.fillRect(dx, 748, dw, 52);
+  for (let i = 0; i < 5; i++) { rr(c, dx + dw / 2 - 106 + i * 44, 760, 30, 30, 8); c.fillStyle = i === 2 ? '#3a9bff' : 'rgba(255,255,255,0.18)'; c.fill(); }
+  // toast slides in from the right, above the taskbar
+  const tk = ease.spring(prog(lt, 0.8, 1.7));
+  const tx = dx + dw - 520;
+  c.translate((1 - tk) * 560, 0);
+  glass(c, tx, 470, 500, 262, 16, { fill: 'rgba(32,36,48,0.96)' });
+  appTile(c, tx + 36, 506, 34);
+  text(c, 'WinDrop', tx + 64, 513, { size: 18, weight: 600, align: 'left', color: C.muted });
+  text(c, 'iPhone sent you a file', tx + 22, 560, { size: 24, weight: 700, align: 'left' });
+  text(c, 'IMG_4021.MOV', tx + 22, 594, { size: 21, weight: 500, align: 'left' });
+  text(c, '1.2 GB · Downloads\\WinDrop', tx + 22, 624, { size: 17, weight: 500, align: 'left', color: C.muted });
+  rr(c, tx + 22, 650, 220, 54, 8); c.fillStyle = 'rgba(255,255,255,0.1)'; c.fill();
+  rr(c, tx + 258, 650, 220, 54, 8); c.fill();
+  text(c, 'Open', tx + 132, 685, { size: 19, weight: 600 });
+  text(c, 'Show in folder', tx + 368, 685, { size: 19, weight: 600 });
+  c.restore();
+  c.restore();
+  // iPhone with a banner
+  phone(c, 1755, 640, 0.62, (cc, w, h) => {
+    waves(cc, w / 2, 300, 50, lt, { alpha: 0.4 });
+    avatar(cc, w / 2, 300, 50, 'laptop');
+    const bk = ease.spring(prog(lt, 2.1, 3.0));
+    cc.save();
+    cc.translate(0, (1 - bk) * -180);
+    glass(cc, 10, 52, w - 20, 104, 26, { fill: 'rgba(40,46,62,0.97)', shadow: 0.5 });
+    appTile(cc, 44, 104, 40);
+    text(cc, 'WINDROP', 76, 84, { size: 13, weight: 700, align: 'left', color: C.muted, spacing: 1 });
+    text(cc, 'SKR sent you a file', 76, 110, { size: 17, weight: 700, align: 'left' });
+    text(cc, 'Invoice.pdf — tap to save', 76, 134, { size: 15, weight: 500, align: 'left' });
+    cc.restore();
+  }, { alpha: ease.outCubic(prog(lt, 0.4, 1.1)) });
+}
+
+function flap(c, ch, x, y, t, i) {
+  const w = 96, h = 132;
+  glass(c, x - w / 2, y - h / 2, w, h, 16, { fill: 'rgba(255,255,255,0.08)', shadow: 0.5 });
+  c.save();
+  c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(x - w / 2 + 6, y); c.lineTo(x + w / 2 - 6, y); c.stroke();
+  const pool = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const land = 2.4 + i * 0.13;
+  let shown = ch;
+  if (ch === '-') shown = '–';
+  else if (t < land) shown = t < 0.4 ? '' : pool[Math.floor((t * 22 + i * 7)) % pool.length];
+  const flip = t < land ? (t * 22) % 1 : 1;
+  c.translate(x, y);
+  c.scale(1, t < land ? Math.abs(Math.cos(flip * Math.PI)) * 0.6 + 0.4 : 1);
+  c.font = `700 84px ${MONO}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillStyle = t >= land ? blueGradient(c, -30, 30) : C.white;
+  c.fillText(shown, 0, 6);
+  c.restore();
+}
+
+function sInternet(c, lt) {
+  kinetic(c, ['Different', 'networks?'], 960, 150, lt - 0.15, { size: 74 });
+  kinetic(c, ['Join', 'with', 'a', 'room', 'code.'], 960, 240, lt - 1.6, { size: 74, accent: [3, 4] });
+  const nodes = [[440, 560, 'phone', 'iPhone · 5G'], [960, 520, 'globe', 'Secure tunnel'], [1480, 560, 'laptop', 'PC · Home Wi-Fi']];
+  // links with moving packets
+  if (lt > 1.0) {
+    c.save();
+    c.globalAlpha *= ease.outCubic(prog(lt, 1.0, 1.6));
+    c.setLineDash([3, 16]); c.lineCap = 'round'; c.lineWidth = 5; c.strokeStyle = 'rgba(100,210,255,0.7)';
+    c.lineDashOffset = -lt * 70;
+    c.beginPath(); c.moveTo(540, 540); c.quadraticCurveTo(720, 420, 860, 500); c.stroke();
+    c.beginPath(); c.moveTo(1060, 500); c.quadraticCurveTo(1200, 420, 1380, 540); c.stroke();
+    c.restore();
+  }
+  nodes.forEach(([x, y, ic, label], i) => {
+    const s = ease.spring(prog(lt, 0.3 + i * 0.15, 1.3 + i * 0.15));
+    if (s <= 0) return;
+    c.save();
+    c.translate(x, y); c.scale(s, s);
+    if (i === 1) waves(c, 0, 0, 90, lt, { alpha: 0.35 });
+    c.beginPath(); c.arc(0, 0, i === 1 ? 100 : 86, 0, Math.PI * 2);
+    c.fillStyle = 'rgba(255,255,255,0.07)'; c.fill();
+    c.strokeStyle = C.line; c.lineWidth = 2; c.stroke();
+    icon(c, ic, 0, 0, i === 1 ? 92 : 74, C.sky, 1.6);
+    if (i === 1) {
+      c.beginPath(); c.arc(64, 64, 32, 0, Math.PI * 2); c.fillStyle = C.green; c.fill();
+      icon(c, 'lock', 64, 64, 34, '#fff', 2.4);
+    }
+    text(c, label, 0, (i === 1 ? 100 : 86) + 52, { size: 30, weight: 600, color: C.muted });
+    c.restore();
+  });
+  const code = 'ZSBE-G9KY';
+  if (lt > 1.9) [...code].forEach((ch, i) => flap(c, ch, 960 + (i - 4) * 112, 830, lt - 1.9, i));
+  chipRow(c, ['Encrypted HTTPS', 'Only on when you switch it on', 'Guessing gets blocked'], 1000, lt - 4.7, 0.18, { iconName: 'lock', iconColor: C.sky });
+}
+
+function sAlways(c, lt) {
+  const rows = [
+    ['power', ['Starts', 'with', 'Windows.']],
+    ['wifi', ['Finds', 'your', 'PC', 'by', 'name.']],
+    ['refresh', ['Reconnects', 'by', 'itself.']],
+  ];
+  waves(c, 1560, 540, 140, lt, { alpha: 0.35 });
+  appTile(c, 1560, 540, 200, prog(lt, 0.2, 1.2));
+  rows.forEach(([ic, words], i) => {
+    const t = lt - 0.3 - i * 1.0;
+    const y = 330 + i * 200;
+    const s = ease.spring(clamp(t / 0.7));
+    if (s <= 0) return;
+    c.save();
+    c.translate(lerp(-100, 220, s), y - 26);
+    glass(c, -60, -60, 120, 120, 30, { fill: 'rgba(10,132,255,0.16)' });
+    icon(c, ic, 0, 0, 58, C.sky, 2);
+    c.restore();
+    kinetic(c, words, 330, y, t, { size: 74, align: 'left', accent: [words.length - 1] });
+    if (i === 1 && t > 0.6) {
+      const n = Math.floor(clamp((t - 0.6) / 1.0) * 'windrop-skr.local'.length);
+      text(c, 'windrop-skr.local'.slice(0, n) + (Math.floor(lt * 3) % 2 ? '▍' : ''), 332, y + 64, { size: 38, weight: 500, font: MONO, color: C.green, align: 'left' });
+    }
+  });
+}
+
+function sInstall(c, lt) {
+  kinetic(c, ['Install', 'in', 'one', 'line.'], 960, 200, lt - 0.1, { size: 92, weight: 800, spacing: -3, accent: [2, 3] });
+  const k = ease.spring(prog(lt, 0.2, 1.1));
+  c.save();
+  c.globalAlpha *= clamp(k * 1.4);
+  c.translate(960, 600); c.scale(0.9 + 0.1 * k, 0.9 + 0.1 * k); c.translate(-960, -600);
+  glass(c, 250, 330, 1420, 520, 24, { fill: 'rgba(12,16,28,0.92)' });
+  [['#ff5f57', 0], ['#febc2e', 1], ['#28c840', 2]].forEach(([col, i]) => { c.beginPath(); c.arc(292 + i * 34, 372, 10, 0, Math.PI * 2); c.fillStyle = col; c.fill(); });
+  text(c, 'Windows PowerShell', 960, 380, { size: 22, weight: 500, color: C.muted });
+  const cmd = 'irm https://raw.githubusercontent.com/sumitkumarraju/WinDrop/main/install.ps1 | iex';
+  const n = Math.floor(clamp((lt - 0.8) / 2.0) * cmd.length);
+  text(c, 'PS>', 300, 470, { size: 27, weight: 600, font: MONO, color: C.sky, align: 'left' });
+  text(c, cmd.slice(0, n) + (n < cmd.length && Math.floor(lt * 4) % 2 ? '▍' : ''), 368, 470, { size: 25, weight: 500, font: MONO, align: 'left' });
+  const lines = ['Node.js found', 'WinDrop installed to %LOCALAPPDATA%\\WinDrop', 'Starts with Windows · shortcuts added', 'Ready — scan the QR code on your PC'];
+  lines.forEach((l, i) => fadeUp(c, lt - 3.1 - i * 0.42, () => {
+    icon(c, 'check', 318, 548 + i * 66, 30, C.green, 2.8);
+    text(c, l, 356, 558 + i * 66, { size: 27, weight: 500, font: MONO, align: 'left' });
+  }, 14));
+  c.restore();
+  fadeUp(c, lt - 4.6, () => text(c, 'Windows 10 / 11  ·  Node.js 18+  ·  free & open source', 960, 945, { size: 32, weight: 500, color: C.muted }));
+}
+
+function sOutro(c, lt) {
+  const cx = 960, cy = 410;
+  waves(c, cx, cy, 120, lt, { alpha: 0.6 });
+  appTile(c, cx, cy, 210, prog(lt, 0.05, 1.0));
+  letters(c, 'WinDrop', cx, 690, lt - 0.5, { size: 140 });
+  fadeUp(c, lt - 1.3, () => text(c, 'Send files like AirDrop — on Windows.', cx, 775, { size: 40, weight: 500, color: C.muted }));
+  fadeUp(c, lt - 1.8, () => {
+    glass(c, cx - 380, 830, 760, 80, 40, { fill: 'rgba(10,132,255,0.16)' });
+    text(c, 'github.com/sumitkumarraju/WinDrop', cx, 884, { size: 34, weight: 600, font: MONO, color: C.sky });
+  });
+}
+
+const SCENES = [
+  { s: 0, e: 6.2, draw: sIntro },
+  { s: 5.7, e: 13.2, draw: sKinetic },
+  { s: 12.7, e: 22.2, draw: sPair },
+  { s: 21.7, e: 33.2, draw: sSend },
+  { s: 32.7, e: 40.2, draw: sNotify },
+  { s: 39.7, e: 49.2, draw: sInternet },
+  { s: 48.7, e: 55.2, draw: sAlways },
+  { s: 54.7, e: 61.2, draw: sInstall },
+  { s: 60.7, e: DURATION, draw: sOutro },
+];
+
+// Full-frame ripple: the WinDrop / Apple "Ripple" shader — each ring of the picture is pushed
+// outward by amplitude·sin(f·t)·e^(−d·t) and lightened or darkened with it, plus a glowing front.
+const RIPPLES = [
+  { t: 1.0, x: 960, y: 420, a: 16 },
+  { t: 18.2, x: 600, y: 560, a: 12 },
+  { t: 28.1, x: 1300, y: 520, a: 15 },
+  { t: 44.0, x: 960, y: 830, a: 9 },
+  { t: 61.0, x: 960, y: 410, a: 16 },
+];
+
+function composite(t) {
+  ctx.drawImage(frame, 0, 0);
+  for (const r of RIPPLES) {
+    const age = t - r.t;
+    if (age <= 0 || age > 2.6) continue;
+    const speed = 1500, freq = 15, decay = 5.5, band = 16;
+    const front = age * speed;
+    const rMin = Math.max(band, front - speed * 0.75), rMax = Math.min(front, 2300);
+    for (let rad = rMin; rad < rMax; rad += band) {
+      const mid = rad + band / 2;
+      const tt = age - mid / speed;
+      if (tt <= 0) continue;
+      const amt = r.a * Math.sin(freq * tt) * Math.exp(-decay * tt);
+      if (Math.abs(amt) < 0.25) continue;
+      const s = mid / (mid + amt); // show the picture from radius mid+amt at radius mid
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, rad + band, 0, Math.PI * 2);
+      ctx.arc(r.x, r.y, rad, 0, Math.PI * 2, true);
+      ctx.clip();
+      ctx.translate(r.x, r.y); ctx.scale(s, s); ctx.translate(-r.x, -r.y);
+      ctx.drawImage(frame, 0, 0);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const light = (0.3 * amt) / r.a;
+      ctx.fillStyle = light > 0 ? `rgba(255,255,255,${light * 0.55})` : `rgba(0,0,0,${-light * 0.55})`;
+      ctx.fillRect(r.x - rad - band, r.y - rad - band, (rad + band) * 2, (rad + band) * 2);
+      ctx.restore();
+    }
+    // glowing wave front
+    const glow = Math.exp(-age * 1.3);
+    if (front > 30) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      const g = ctx.createRadialGradient(r.x, r.y, Math.max(0, front - 90), r.x, r.y, front + 6);
+      g.addColorStop(0, 'rgba(90,170,255,0)');
+      g.addColorStop(0.8, `rgba(120,190,255,${0.32 * glow})`);
+      g.addColorStop(1, 'rgba(120,190,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(r.x - front - 10, r.y - front - 10, (front + 10) * 2, (front + 10) * 2);
+      ctx.restore();
+    }
+  }
+  if (t > DURATION - 0.9) { ctx.fillStyle = `rgba(0,0,0,${prog(t, DURATION - 0.9, DURATION)})`; ctx.fillRect(0, 0, W, H); }
+  if (t < 0.4) { ctx.fillStyle = `rgba(0,0,0,${1 - prog(t, 0, 0.4)})`; ctx.fillRect(0, 0, W, H); }
+}
+
+function render(t) {
+  background(fctx, t);
+  for (const sc of SCENES) {
+    if (t < sc.s || t >= sc.e) continue;
+    const lt = t - sc.s, dur = sc.e - sc.s;
+    const inK = sc.s === 0 ? 1 : ease.outCubic(clamp(lt / 0.6));
+    const outK = sc.e >= DURATION ? 0 : ease.inCubic(clamp((lt - (dur - 0.5)) / 0.5));
+    if (inK >= 1 && outK <= 0) { fctx.save(); sc.draw(fctx, lt, dur, t); fctx.restore(); continue; }
+    // iOS-style zoom transition: outgoing scene grows + blurs away, incoming one settles in
+    lctx.setTransform(1, 0, 0, 1, 0, 0);
+    lctx.clearRect(0, 0, W, H);
+    lctx.save(); sc.draw(lctx, lt, dur, t); lctx.restore();
+    fctx.save();
+    fctx.globalAlpha = inK * (1 - outK);
+    const blur = (1 - inK) * 14 + outK * 14;
+    if (blur > 0.3) fctx.filter = `blur(${blur}px)`;
+    const s = 0.93 + 0.07 * inK + 0.08 * outK;
+    fctx.translate(W / 2, H / 2); fctx.scale(s, s); fctx.translate(-W / 2, -H / 2);
+    fctx.drawImage(layer, 0, 0);
+    fctx.restore();
+  }
+  composite(t);
+}
+
+// ---------- soundtrack (synthesized, so it's free to use) ----------
+const CHIMES = [1.0, 18.2, 28.1, 33.5, 34.8, 44.0, 61.0];
+const WHOOSHES = [5.7, 12.7, 21.7, 32.7, 39.7, 48.7, 54.7, 60.7];
+function buildAudio(ac, t0 = 0) {
+  const out = ac.createDynamicsCompressor();
+  out.threshold.value = -14; out.ratio.value = 3;
+  const master = ac.createGain();
+  master.gain.setValueAtTime(0.0001, t0);
+  master.gain.exponentialRampToValueAtTime(0.9, t0 + 1.2);
+  master.gain.setValueAtTime(0.9, t0 + DURATION - 2.5);
+  master.gain.exponentialRampToValueAtTime(0.0001, t0 + DURATION);
+  master.connect(out); out.connect(ac.destination);
+
+  // warm pad: Cmaj9 – Am9 – Fmaj9 – Gsus, 4 s per chord
+  const chords = [
+    [130.81, 164.81, 196.0, 246.94, 293.66],
+    [110.0, 130.81, 164.81, 196.0, 246.94],
+    [87.31, 110.0, 130.81, 164.81, 196.0],
+    [98.0, 130.81, 146.83, 196.0, 293.66],
+  ];
+  const padFilter = ac.createBiquadFilter();
+  padFilter.type = 'lowpass'; padFilter.frequency.value = 1100; padFilter.Q.value = 0.4;
+  const padGain = ac.createGain(); padGain.gain.value = 0.5;
+  padFilter.connect(padGain); padGain.connect(master);
+  for (let start = 0, i = 0; start < DURATION; start += 4, i++) {
+    for (const f of chords[i % 4]) {
+      for (const det of [-7, 7]) {
+        const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det;
+        const g = ac.createGain();
+        const a = t0 + start, b = t0 + Math.min(DURATION, start + 4.8);
+        g.gain.setValueAtTime(0.0001, a);
+        g.gain.linearRampToValueAtTime(0.014, a + 1.0);
+        g.gain.setValueAtTime(0.014, b - 1.4);
+        g.gain.linearRampToValueAtTime(0.0001, b);
+        o.connect(g); g.connect(padFilter);
+        o.start(a); o.stop(b + 0.05);
+      }
+    }
+  }
+  // soft pulse (100 bpm) through the middle
+  for (let t = 6.0; t < 58.5; t += 0.6) {
+    const o = ac.createOscillator(); o.type = 'sine';
+    const g = ac.createGain();
+    o.frequency.setValueAtTime(110, t0 + t); o.frequency.exponentialRampToValueAtTime(42, t0 + t + 0.14);
+    g.gain.setValueAtTime(0.0001, t0 + t); g.gain.exponentialRampToValueAtTime(0.22, t0 + t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + t + 0.28);
+    o.connect(g); g.connect(master); o.start(t0 + t); o.stop(t0 + t + 0.3);
+  }
+  // whooshes on transitions
+  const noise = ac.createBuffer(1, ac.sampleRate * 1.2, ac.sampleRate);
+  const nd = noise.getChannelData(0); const rnd = rand(3);
+  for (let i = 0; i < nd.length; i++) nd[i] = rnd() * 2 - 1;
+  for (const t of WHOOSHES) {
+    const src = ac.createBufferSource(); src.buffer = noise;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+    bp.frequency.setValueAtTime(350, t0 + t - 0.35); bp.frequency.exponentialRampToValueAtTime(3200, t0 + t + 0.45);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t0 + t - 0.35); g.gain.exponentialRampToValueAtTime(0.16, t0 + t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + t + 0.6);
+    src.connect(bp); bp.connect(g); g.connect(master); src.start(t0 + t - 0.35); src.stop(t0 + t + 0.7);
+  }
+  // chimes on key moments (paired, received, notifications)
+  for (const t of CHIMES) {
+    [[880, 0, 0.12], [1318.5, 0.09, 0.1], [2637, 0.09, 0.025]].forEach(([f, d, v]) => {
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + t + d); g.gain.exponentialRampToValueAtTime(v, t0 + t + d + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + t + d + 1.3);
+      o.connect(g); g.connect(master); o.start(t0 + t + d); o.stop(t0 + t + d + 1.4);
+    });
+  }
+  // typing ticks (pairing digits, split-flap, terminal)
+  const ticks = [];
+  for (let i = 0; i < 6; i++) ticks.push(12.7 + 3.1 + i * 0.22);
+  for (let i = 0; i < 9; i++) ticks.push(39.7 + 1.9 + 2.4 + i * 0.13);
+  for (let t = 55.5; t < 57.5; t += 0.045) ticks.push(t);
+  for (const t of ticks) {
+    const src = ac.createBufferSource(); src.buffer = noise;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3500;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.05, t0 + t); g.gain.exponentialRampToValueAtTime(0.0001, t0 + t + 0.03);
+    src.connect(hp); hp.connect(g); g.connect(master); src.start(t0 + t, rnd() * 0.5); src.stop(t0 + t + 0.04);
+  }
+}
+
+// ---------- modes ----------
+const params = new URLSearchParams(location.search);
+const report = msg => fetch('/log', { method: 'POST', body: String(msg) }).catch(() => {});
+
+async function exportVideo() {
+  await document.fonts.ready;
+  const { Muxer, ArrayBufferTarget } = Mp4Muxer;
+  const videoCfg = { codec: 'avc1.640028', width: W, height: H, bitrate: 6_000_000, framerate: FPS, avc: { format: 'avc' } };
+  if (!(await VideoEncoder.isConfigSupported(videoCfg)).supported) videoCfg.codec = 'avc1.4d0028';
+  if (!(await VideoEncoder.isConfigSupported(videoCfg)).supported) throw new Error('No H.264 encoder available');
+  const SR = 48000;
+  const audioCfg = { codec: 'mp4a.40.2', sampleRate: SR, numberOfChannels: 2, bitrate: 160000 };
+  const hasAudio = 'AudioEncoder' in window && (await AudioEncoder.isConfigSupported(audioCfg).catch(() => ({}))).supported;
+  report(`video ${videoCfg.codec}, audio ${hasAudio ? 'aac' : 'none'}`);
+
+  const muxer = new Muxer({
+    target: new ArrayBufferTarget(),
+    video: { codec: 'avc', width: W, height: H, frameRate: FPS },
+    ...(hasAudio ? { audio: { codec: 'aac', numberOfChannels: 2, sampleRate: SR } } : {}),
+    fastStart: 'in-memory',
+  });
+
+  if (hasAudio) {
+    const off = new OfflineAudioContext(2, SR * DURATION, SR);
+    buildAudio(off);
+    const buf = await off.startRendering();
+    const enc = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: e => report('audio error ' + e.message) });
+    enc.configure(audioCfg);
+    const L = buf.getChannelData(0), R = buf.getChannelData(1), N = 1024;
+    for (let i = 0; i < buf.length; i += N) {
+      const n = Math.min(N, buf.length - i);
+      const data = new Float32Array(n * 2);
+      data.set(L.subarray(i, i + n), 0); data.set(R.subarray(i, i + n), n);
+      const ad = new AudioData({ format: 'f32-planar', sampleRate: SR, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(i / SR * 1e6), data });
+      enc.encode(ad); ad.close();
+    }
+    await enc.flush();
+    report('audio done');
+  }
+
+  const venc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => report('video error ' + e.message) });
+  venc.configure(videoCfg);
+  const total = DURATION * FPS;
+  for (let i = 0; i < total; i++) {
+    render(i / FPS);
+    const vf = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+    venc.encode(vf, { keyFrame: i % (FPS * 2) === 0 });
+    vf.close();
+    while (venc.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 2));
+    if (i % 60 === 0) report(`frame ${i}/${total}`);
+  }
+  await venc.flush();
+  muxer.finalize();
+  await fetch('/save', { method: 'POST', body: muxer.target.buffer });
+}
+
+async function snaps(times) {
+  await document.fonts.ready;
+  for (const t of times) {
+    render(t);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    await fetch('/snap?t=' + t, { method: 'POST', body: blob });
+  }
+  await fetch('/snaps-done', { method: 'POST' });
+}
+
+function preview() {
+  let start = null, audio = null;
+  const loop = now => {
+    if (start === null) start = now;
+    const t = ((now - start) / 1000) % DURATION;
+    render(t);
+    requestAnimationFrame(loop);
+  };
+  const play = document.getElementById('play');
+  play.hidden = false;
+  play.onclick = () => {
+    play.hidden = true;
+    try { audio = new AudioContext(); buildAudio(audio, audio.currentTime + 0.05); } catch {}
+    start = null;
+    requestAnimationFrame(loop);
+  };
+  render(1.6);
+}
+
+if (params.has('export')) exportVideo().catch(e => report('FAILED ' + e.message));
+else if (params.has('snap')) snaps(params.get('snap').split(',').map(Number)).catch(e => report('FAILED ' + e.message));
+else preview();
+</script>
+</body>
+</html>

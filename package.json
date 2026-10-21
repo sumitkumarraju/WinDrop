@@ -1,0 +1,24 @@
+{
+  "name": "windrop",
+  "version": "1.0.0",
+  "description": "AirDrop-style file sharing between iPhone and Windows over Wi-Fi.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "install-app": "node server.js --install",
+    "uninstall-app": "node server.js --uninstall"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32"
+  ],
+  "keywords": ["airdrop", "file-transfer", "iphone", "windows", "wifi", "local-network"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sumitkumarraju/WinDrop.git"
+  },
+  "license": "MIT",
+  "dependencies": {}
+}

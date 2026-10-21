@@ -1,0 +1,10 @@
+# This PC's settings: paired-device keys, room code, ntfy topic — never commit
+windrop.config.json
+windrop.log
+
+# Downloaded by install.ps1
+bin/
+
+node_modules/
+*.windrop-part
+*.zip

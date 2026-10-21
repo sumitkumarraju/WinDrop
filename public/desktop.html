@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/icon.svg">
+<title>WinDrop</title>
+<style>
+  :root {
+    --bg: #eef2f8; --glow: rgba(0,103,192,.14);
+    --surface: rgba(255,255,255,.76); --surface-2: rgba(255,255,255,.55); --border: rgba(15,23,42,.08);
+    --text: #111827; --muted: #5b6474;
+    --accent: #0067c0; --accent-bg: #0067c0; --accent-soft: rgba(0,103,192,.1); --wave: rgba(0,103,192,.24);
+    --ok: #0f7b0f; --ok-soft: rgba(15,123,15,.12); --warn: #9d5d00; --bad: #c42b1c;
+    --shadow: 0 1px 2px rgba(15,23,42,.04), 0 12px 32px rgba(15,23,42,.07);
+    --k-image: #0b7a75; --k-video: #c2410c; --k-music: #be185d; --k-archive: #a16207; --k-doc: #1d4ed8; --k-file: #475569;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0d13; --glow: rgba(76,194,255,.12);
+      --surface: rgba(32,37,48,.7); --surface-2: rgba(40,46,58,.55); --border: rgba(255,255,255,.07);
+      --text: #f3f4f6; --muted: #9ca3af;
+      --accent: #60cdff; --accent-soft: rgba(96,205,255,.12); --wave: rgba(76,194,255,.32);
+      --ok: #6ccb5f; --ok-soft: rgba(108,203,95,.14); --warn: #fce100; --bad: #ff99a4;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.35);
+      --k-image: #5eead4; --k-video: #fdba74; --k-music: #f9a8d4; --k-archive: #fcd34d; --k-doc: #93c5fd; --k-file: #cbd5e1;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    color: var(--text); background: var(--bg); overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    height: 100%; display: flex; flex-direction: column;
+    background: radial-gradient(60% 70% at 32% 42%, var(--glow), transparent 70%), var(--bg);
+  }
+  .i { width: 18px; height: 18px; flex: none; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  button:focus-visible, select:focus-visible, li:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- top bar ---------- */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 22px; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 600 18px/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+  .brand img { width: 28px; height: 28px; }
+  .actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 16px; border-radius: 8px;
+    font-weight: 600; transition: background-color .15s ease, transform .1s ease;
+  }
+  .btn:active { transform: scale(.98); }
+  .btn .lbl { white-space: nowrap; }
+  @media (max-width: 560px) { .btn .lbl { display: none; } .btn { padding: 0 10px; } }
+  .btn.primary { background: var(--accent-bg); color: #fff; box-shadow: 0 4px 14px rgba(0,103,192,.3); }
+  .btn.primary:hover { background: #005aa8; }
+  .btn.subtle { background: var(--surface); border: 1px solid var(--border); }
+  .btn.subtle:hover { background: var(--surface-2); }
+  .icon-btn { width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); }
+  .icon-btn:hover { background: var(--accent-soft); color: var(--text); }
+
+  /* ---------- layout ---------- */
+  .layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; padding: 0 22px 22px; }
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    .app { height: auto; min-height: 100%; }
+    .layout { grid-template-columns: 1fr; }
+  }
+  .stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; min-height: 460px; min-width: 0; }
+  .radar { position: relative; width: min(56vmin, 470px); aspect-ratio: 1; display: grid; place-items: center; }
+  .wave {
+    position: absolute; inset: 0; margin: auto; width: 26%; height: 26%; border-radius: 50%;
+    border: 1.5px solid var(--wave); background: radial-gradient(circle, transparent 58%, var(--wave));
+    opacity: 0; animation: wave 4.8s cubic-bezier(.2,.6,.35,1) infinite;
+  }
+  .wave:nth-child(2) { animation-delay: 1.2s; } .wave:nth-child(3) { animation-delay: 2.4s; } .wave:nth-child(4) { animation-delay: 3.6s; }
+  .radar.busy .wave { animation-duration: 1.8s; }
+  .radar.busy .wave:nth-child(2) { animation-delay: .45s; } .radar.busy .wave:nth-child(3) { animation-delay: .9s; } .radar.busy .wave:nth-child(4) { animation-delay: 1.35s; }
+  @keyframes wave { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(3.7); opacity: 0; } }
+  .me {
+    position: relative; z-index: 2; width: 26%; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; color: #fff;
+    background: linear-gradient(160deg, #3a9bff, #0060d0);
+    box-shadow: 0 16px 44px rgba(0,96,208,.42), inset 0 1px 0 rgba(255,255,255,.4);
+  }
+  .me .i { width: 44%; height: 44%; stroke-width: 1.6; }
+
+  .peer {
+    position: absolute; z-index: 3; transform: translate(-50%, -50%); width: 128px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+    animation: pop .5s cubic-bezier(.3,1.5,.5,1);
+  }
+  @keyframes pop { from { transform: translate(-50%, -50%) scale(.3); opacity: 0; } }
+  .avatar {
+    position: relative; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; color: var(--accent);
+    background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  }
+  .avatar .i { width: 30px; height: 30px; }
+  .ring { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 4; }
+  .ring .track { stroke: transparent; }
+  .ring .bar { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 289; stroke-dashoffset: 289; transition: stroke-dashoffset .25s ease; }
+  .peer.active .ring .track { stroke: var(--border); }
+  .peer.ok .ring .bar { stroke: var(--ok); } .peer.ok .avatar { color: var(--ok); }
+  .pname { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pstat { font-size: 12px; color: var(--muted); margin-top: -4px; }
+
+  .who { text-align: center; }
+  .who h1 { margin: 0; font: 600 24px/1.25 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+  .who p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+
+  .transfers { list-style: none; margin: 4px 0 0; padding: 0; width: min(100%, 520px); display: flex; flex-direction: column; gap: 8px; }
+
+  /* ---------- side ---------- */
+  .side { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; padding-bottom: 2px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3); backdrop-filter: blur(24px) saturate(1.3);
+  }
+  .card h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .link { color: var(--accent); font-size: 12.5px; padding: 4px 6px; border-radius: 6px; }
+  .link:hover { background: var(--accent-soft); }
+
+  .pair-row { display: flex; gap: 16px; align-items: flex-start; }
+  .qr { flex: none; width: 140px; height: 140px; padding: 8px; border-radius: 12px; background: #fff; display: grid; place-items: center; box-shadow: 0 0 0 1px var(--border); }
+  .qr svg { width: 100%; height: 100%; }
+  .qr span { color: #333; font-size: 12px; text-align: center; }
+  .steps { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .steps li { margin: 3px 0; }
+  .field { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .field select { flex: 1; min-width: 0; font: inherit; color: var(--text); padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; }
+  .auto { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .auto .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft); }
+  .auto.off .dot { background: var(--muted); box-shadow: none; }
+  .auto code { color: var(--text); font: 12.5px Consolas, monospace; }
+
+  .grow { flex: 1; min-height: 180px; display: flex; flex-direction: column; }
+  .files { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 10px; }
+  .files .row { cursor: pointer; }
+  .files .row:hover { background: var(--accent-soft); }
+  .ficon { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, currentColor 14%, transparent); }
+  .k-image { color: var(--k-image); } .k-video { color: var(--k-video); } .k-music { color: var(--k-music); }
+  .k-archive { color: var(--k-archive); } .k-doc { color: var(--k-doc); } .k-file { color: var(--k-file); }
+  .body { flex: 1; min-width: 0; }
+  .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta { font-size: 12px; color: var(--muted); }
+  .progress { height: 4px; border-radius: 99px; background: var(--border); margin-top: 6px; overflow: hidden; }
+  .progress span { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
+  .transfers .row { background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); padding: 10px 12px; }
+  .transfers .row.stalled .meta { color: var(--warn); }
+  .empty { padding: 24px 8px; text-align: center; color: var(--muted); font-size: 13px; }
+  .empty .i { width: 28px; height: 28px; display: block; margin: 0 auto 8px; opacity: .6; }
+
+  .setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .setting-title { font-weight: 600; }
+  .setting-sub { font-size: 12.5px; color: var(--muted); }
+  .setting.sep { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .btn.small { min-height: 30px; padding: 0 12px; font-size: 13px; flex: none; }
+  .ntfy { margin-top: 10px; padding: 12px; border-radius: 10px; background: var(--accent-soft); }
+  .ntfy .steps { margin-top: 0; }
+  .topic { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .topic code { font: 12.5px Consolas, monospace; color: var(--text); background: var(--surface); padding: 3px 7px; border-radius: 6px; overflow-wrap: anywhere; }
+  .pin-box { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .pin { font: 600 32px/1.1 "Cascadia Mono", Consolas, monospace; letter-spacing: 3px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .pin-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 12px; color: var(--muted); }
+  .pin-timer { width: 96px; height: 4px; border-radius: 99px; background: var(--border); overflow: hidden; }
+  .pin-timer span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 1s linear; }
+  .dev-ic { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); }
+  .room { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--accent-soft); }
+  .room-status { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+  .room-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+  .room-status.online .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft); }
+  .room-status.error .dot { background: var(--bad); }
+  .room-status.error { color: var(--bad); }
+  .room-code-row { display: flex; align-items: flex-end; justify-content: space-between; margin: 10px 0 4px; }
+  .room-label { font-size: 12px; color: var(--muted); }
+  .room-code { font: 600 26px/1.1 Consolas, "Cascadia Mono", monospace; letter-spacing: 2px; color: var(--text); }
+  .qr.small { width: 112px; height: 112px; padding: 6px; }
+  .room .pair-row { margin-top: 10px; }
+  .fine { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+  .switch { flex: none; width: 44px; height: 24px; border-radius: 99px; position: relative; background: var(--border); border: 1px solid var(--muted); transition: background-color .2s ease; }
+  .switch span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform .2s ease, background-color .2s ease; }
+  .switch[aria-checked="true"] { background: var(--accent-bg); border-color: var(--accent-bg); }
+  .switch[aria-checked="true"] span { transform: translateX(20px); background: #fff; }
+
+  .drop {
+    position: fixed; inset: 12px; z-index: 8000; display: none; place-items: center; text-align: center;
+    border: 2px dashed var(--accent); border-radius: 20px; color: var(--accent);
+    background: color-mix(in srgb, var(--bg) 82%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  .drop.on { display: grid; }
+  .drop .i { width: 44px; height: 44px; margin: 0 auto 10px; display: block; }
+  .drop strong { display: block; font-size: 20px; }
+  .drop span { color: var(--muted); }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; z-index: 9500; display: flex; align-items: center; gap: 10px; max-width: 70vw;
+    padding: 11px 18px; border-radius: 12px; font-weight: 600;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+    transform: translate(-50%, 20px); opacity: 0; transition: transform .3s ease, opacity .3s ease; pointer-events: none;
+  }
+  .toast span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toast .i { color: var(--accent); } .toast.ok .i { color: var(--ok); } .toast.bad .i { color: var(--bad); }
+  .toast.on { transform: translate(-50%, 0); opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .wave { animation: none; opacity: .45; }
+    .wave:nth-child(1) { transform: scale(1.6); } .wave:nth-child(2) { transform: scale(2.4); opacity: .25; }
+    .wave:nth-child(3), .wave:nth-child(4) { display: none; }
+    .peer { animation: none; }
+    .ring .bar, .progress span, .toast, .switch, .switch span { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand"><img src="/icon.svg" alt="">WinDrop</div>
+    <div class="actions">
+      <button class="btn primary" id="sendBtn" aria-label="Send to phone"><span data-icon="send"></span><span class="lbl">Send to phone</span></button>
+      <button class="btn subtle" id="openBtn" aria-label="Open folder"><span data-icon="folder"></span><span class="lbl">Open folder</span></button>
+      <button class="icon-btn" id="quitBtn" title="Quit WinDrop" aria-label="Quit WinDrop"><span data-icon="power"></span></button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage">
+      <div class="radar" id="radar">
+        <span class="wave"></span><span class="wave"></span><span class="wave"></span><span class="wave"></span>
+        <div class="me" id="me"><span data-icon="laptop"></span></div>
+        <div id="peers"></div>
+      </div>
+      <div class="who" aria-live="polite">
+        <h1 id="host">This PC</h1>
+        <p id="state">Discoverable — waiting for your iPhone</p>
+      </div>
+      <ul class="transfers" id="transfers" aria-label="Incoming files"></ul>
+    </section>
+
+    <aside class="side">
+      <div class="card">
+        <div class="pair-row">
+          <div class="qr" id="qr" role="img" aria-label="QR code to connect your phone"></div>
+          <div>
+            <h2>Connect your iPhone</h2>
+            <ol class="steps">
+              <li>Scan this code with the Camera app</li>
+              <li>Type the <b>pairing code</b> below</li>
+              <li>In Safari tap Share → <b>Add to Home Screen</b> — it connects by itself after that</li>
+            </ol>
+          </div>
+        </div>
+        <div class="pin-box">
+          <div>
+            <div class="room-label">Pairing code</div>
+            <div class="pin" id="pin" aria-live="polite">––– –––</div>
+          </div>
+          <div class="pin-side">
+            <div class="pin-timer" aria-hidden="true"><span id="pinBar"></span></div>
+            <span id="pinLeft"></span>
+            <button class="link" id="pinNew">New code</button>
+          </div>
+        </div>
+        <label class="field" id="netField" hidden><span>Network</span><select id="net"></select></label>
+        <div class="auto off" id="auto"><span class="dot"></span><span id="autoText">Checking auto-connect…</span></div>
+      </div>
+
+      <div class="card">
+        <div class="setting">
+          <div>
+            <div class="setting-title">Internet mode</div>
+            <div class="setting-sub">Connect with a room code when your phone is on a different network (mobile data, another Wi-Fi)</div>
+          </div>
+          <button class="switch" id="netSwitch" role="switch" aria-checked="false" aria-label="Internet mode"><span></span></button>
+        </div>
+        <div class="room" id="roomBox" hidden>
+          <div class="room-status" id="roomStatus"><span class="dot"></span><span id="roomStatusText"></span></div>
+          <div class="room-code-row">
+            <div>
+              <div class="room-label">Room code</div>
+              <div class="room-code" id="roomCode">—</div>
+            </div>
+            <button class="link" id="newCode" title="Make a new code and disconnect phones using the old one">New code</button>
+          </div>
+          <div class="pair-row" id="roomLinkRow" hidden>
+            <div class="qr small" id="roomQr" role="img" aria-label="QR code to join over the internet"></div>
+            <div>
+              <ol class="steps">
+                <li>On your iPhone, scan this code — or open the link from the ntfy notification</li>
+                <li>Enter the room code</li>
+              </ol>
+              <div class="topic"><code id="roomUrl"></code><button class="link" id="copyRoom">Copy link</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card grow">
+        <div class="card-head"><h2>Received</h2><button class="link" id="openBtn2">Downloads\WinDrop</button></div>
+        <ul class="files" id="recv"></ul>
+      </div>
+
+      <div class="card" id="sharedCard" hidden>
+        <div class="card-head"><h2>Waiting on your phone</h2></div>
+        <ul class="files" id="shared"></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Trusted devices</h2></div>
+        <ul class="files" id="devices"></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Notifications</h2></div>
+        <div class="setting">
+          <div>
+            <div class="setting-title">On this PC</div>
+            <div class="setting-sub">A Windows notification with Open / Show in folder whenever a file arrives</div>
+          </div>
+          <button class="btn subtle small" id="testPc">Test</button>
+        </div>
+        <div class="setting sep">
+          <div>
+            <div class="setting-title">On my iPhone</div>
+            <div class="setting-sub">Get notified when this PC sends you files, even when WinDrop is closed on the phone</div>
+          </div>
+          <button class="switch" id="phoneSwitch" role="switch" aria-checked="false" aria-label="Notify my iPhone"><span></span></button>
+        </div>
+        <div class="ntfy" id="ntfySetup" hidden>
+          <ol class="steps">
+            <li>Install the free <b>ntfy</b> app from the App Store and allow notifications</li>
+            <li>Tap <b>+</b> and subscribe to this topic:
+              <span class="topic"><code id="topic"></code><button class="link" id="copyTopic">Copy</button></span>
+            </li>
+            <li>Tap <b>Send test</b> to check it works</li>
+          </ol>
+          <button class="btn subtle small" id="testPhone">Send test</button>
+          <p class="fine">Uses the free ntfy.sh service. Only file names and sizes pass through it; your files never do.</p>
+        </div>
+      </div>
+
+      <div class="card setting">
+        <div>
+          <div class="setting-title">Start with Windows</div>
+          <div class="setting-sub">Runs quietly in the background so your phone can always connect</div>
+        </div>
+        <button class="switch" id="autoSwitch" role="switch" aria-checked="false" aria-label="Start with Windows"><span></span></button>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="drop" id="drop"><div><span data-icon="send"></span><strong>Drop to send to your phone</strong><span>Any file, any size</span></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="file" multiple hidden>
+
+<script src="/common.js"></script>
+<script src="/ripple.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script>
+const { $, icon, fileIcon, size, speed, eta, time, esc, toast } = WD;
+document.querySelectorAll('[data-icon]').forEach(el => { el.outerHTML = icon(el.dataset.icon); });
+WDRipple.init($('app'), { tint: [96, 180, 255] });
+
+const radar = $('radar');
+const peerEls = new Map();    // pid -> bubble element
+const transfers = new Map();  // upload id -> transfer
+let livePeers = [];
+const ANGLES = [-38, 218, 18, 162, 100, 280, -100, 60];
+
+// ---------- peers around the radar ----------
+function peerEl(pid, device) {
+  let el = peerEls.get(pid);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'peer';
+    el.innerHTML = `<div class="avatar"><svg class="ring" viewBox="0 0 100 100" aria-hidden="true"><circle class="track" cx="50" cy="50" r="46"/><circle class="bar" cx="50" cy="50" r="46"/></svg><span class="ic">${icon('phone')}</span></div><div class="pname"></div><div class="pstat">Connected</div>`;
+    $('peers').appendChild(el);
+    peerEls.set(pid, el);
+    layoutPeers();
+    requestAnimationFrame(() => WDRipple.playFrom(el.querySelector('.avatar'), { amplitude: 5, glow: 0.5 }));
+  }
+  el.querySelector('.pname').textContent = device || 'Phone';
+  return el;
+}
+
+const connectedLabel = el => (el.dataset.via === 'internet' ? 'Connected · Internet' : 'Connected · Wi-Fi');
+
+function layoutPeers() {
+  [...peerEls.values()].forEach((el, i) => {
+    const a = (ANGLES[i % ANGLES.length] * Math.PI) / 180;
+    el.style.left = 50 + 40 * Math.cos(a) + '%';
+    el.style.top = 50 + 40 * Math.sin(a) + '%';
+  });
+}
+
+const busyPids = () => new Set([...transfers.values()].map(t => t.pid));
+
+function renderPeers(list) {
+  livePeers = list;
+  const keep = new Set(list.map(p => p.pid));
+  for (const p of list) {
+    const el = peerEl(p.pid, p.device);
+    el.dataset.via = p.via || 'wifi';
+    if (!el.classList.contains('active') && !el.classList.contains('ok')) el.querySelector('.pstat').textContent = connectedLabel(el);
+  }
+  const busy = busyPids();
+  for (const [pid, el] of peerEls) {
+    if (!keep.has(pid) && !busy.has(pid) && !el.classList.contains('ok')) { el.remove(); peerEls.delete(pid); }
+  }
+  layoutPeers();
+  updateState();
+}
+
+function paintPeer(pid) {
+  const el = peerEls.get(pid);
+  if (!el) return;
+  const list = [...transfers.values()].filter(t => t.pid === pid);
+  if (!list.length) return;
+  const total = list.reduce((s, t) => s + t.size, 0) || 1;
+  const got = list.reduce((s, t) => s + t.got, 0);
+  el.classList.add('active');
+  el.classList.remove('ok');
+  el.querySelector('.ic').innerHTML = icon('phone');
+  el.querySelector('.bar').style.strokeDashoffset = 289 * (1 - Math.min(1, got / total));
+  el.querySelector('.pstat').textContent = `Sending · ${Math.floor((got / total) * 100)}%`;
+}
+
+function settlePeer(pid, ok) {
+  const el = peerEls.get(pid);
+  if (!el || busyPids().has(pid)) return;
+  el.classList.remove('active');
+  el.classList.toggle('ok', ok);
+  el.querySelector('.bar').style.strokeDashoffset = ok ? 0 : 289;
+  el.querySelector('.ic').innerHTML = icon(ok ? 'check' : 'phone');
+  el.querySelector('.pstat').textContent = ok ? 'Received' : 'Stopped';
+  setTimeout(() => {
+    if (busyPids().has(pid)) return;
+    el.classList.remove('ok');
+    el.querySelector('.bar').style.strokeDashoffset = 289;
+    el.querySelector('.ic').innerHTML = icon('phone');
+    el.querySelector('.pstat').textContent = connectedLabel(el);
+    renderPeers(livePeers);
+  }, 3000);
+}
+
+function updateState() {
+  const active = [...transfers.values()];
+  radar.classList.toggle('busy', active.length > 0);
+  if (active.length) {
+    const t = active[0];
+    $('state').textContent = active.length === 1 ? `Receiving ${t.name} from ${t.device}` : `Receiving ${active.length} files`;
+  } else {
+    $('state').textContent = livePeers.length
+      ? `${[...new Set(livePeers.map(p => p.device))].join(', ')} connected — send from your phone`
+      : 'Discoverable — waiting for your iPhone';
+  }
+}
+
+// ---------- incoming transfers ----------
+function addTransfer(d) {
+  if (transfers.has(d.id)) return transfers.get(d.id);
+  const t = { ...d, pid: d.pid || d.id, got: d.received || 0, speed: 0, lastGot: d.received || 0, lastTime: performance.now(), updated: Date.now() };
+  t.el = document.createElement('li');
+  t.el.className = 'row';
+  t.el.innerHTML = `${fileIcon(d.name)}
+    <div class="body"><div class="name">${esc(d.name)}</div><div class="meta"></div><div class="progress"><span></span></div></div>
+    <button class="icon-btn" title="Cancel" aria-label="Cancel ${esc(d.name)}">${icon('x')}</button>`;
+  t.el.querySelector('button').onclick = () => fetch('/api/upload?id=' + encodeURIComponent(d.id), { method: 'DELETE' });
+  $('transfers').prepend(t.el);
+  transfers.set(d.id, t);
+  peerEl(t.pid, d.device);
+  paintTransfer(t);
+  paintPeer(t.pid);
+  updateState();
+  return t;
+}
+
+function paintTransfer(t) {
+  const stalled = Date.now() - t.updated > 8000;
+  t.el.classList.toggle('stalled', stalled);
+  t.el.querySelector('.progress span').style.width = (t.size ? (t.got / t.size) * 100 : 0) + '%';
+  t.el.querySelector('.meta').textContent = stalled
+    ? `Paused — waiting for ${t.device} (${size(t.got)} of ${size(t.size)})`
+    : `From ${t.device} · ${size(t.got)} of ${size(t.size)}${t.speed ? ' · ' + speed(t.speed) + ' · ' + eta((t.size - t.got) / t.speed) : ''}`;
+}
+setInterval(() => transfers.forEach(paintTransfer), 2000);
+
+function removeTransfer(id) {
+  const t = transfers.get(id);
+  if (!t) return null;
+  transfers.delete(id);
+  t.el.remove();
+  updateState();
+  return t;
+}
+
+// ---------- received / shared lists ----------
+let receivedList = [];
+function renderReceived() {
+  const ul = $('recv');
+  if (!receivedList.length) {
+    ul.innerHTML = `<li class="empty">${icon('download')}Files from your iPhone will appear here</li>`;
+    return;
+  }
+  ul.innerHTML = receivedList.map(f => `
+    <li class="row" tabindex="0" data-file="${esc(f.name)}" title="Show in folder">
+      ${fileIcon(f.name)}
+      <div class="body"><div class="name">${esc(f.name)}</div><div class="meta">${size(f.size)} · ${esc(f.device)} · ${time(f.time)}</div></div>
+    </li>`).join('');
+}
+function revealRow(e) {
+  const li = e.target.closest('li[data-file]');
+  if (li && (e.type === 'click' || e.key === 'Enter')) fetch('/api/open?file=' + encodeURIComponent(li.dataset.file), { method: 'POST' });
+}
+$('recv').addEventListener('click', revealRow);
+$('recv').addEventListener('keydown', revealRow);
+
+function renderShared(list) {
+  $('sharedCard').hidden = !list.length;
+  $('shared').innerHTML = list.map(f => `
+    <li class="row">
+      ${fileIcon(f.name)}
+      <div class="body"><div class="name">${esc(f.name)}</div><div class="meta">${size(f.size)}</div></div>
+      <button class="icon-btn" data-id="${f.id}" title="Stop sharing" aria-label="Stop sharing ${esc(f.name)}">${icon('x')}</button>
+    </li>`).join('');
+}
+$('shared').addEventListener('click', e => {
+  const b = e.target.closest('button[data-id]');
+  if (b) fetch('/api/share/' + b.dataset.id, { method: 'DELETE' });
+});
+
+// ---------- PC -> phone ----------
+async function shareFiles(files) {
+  if (!files.length) return;
+  toast(files.length === 1 ? `Preparing ${files[0].name}…` : `Preparing ${files.length} files…`);
+  for (const f of files) {
+    const r = await fetch('/api/share?name=' + encodeURIComponent(f.name), { method: 'POST', body: f }).catch(() => null);
+    if (!r || !r.ok) { toast(`Couldn't share ${f.name}`, 'bad'); return; }
+  }
+  WDRipple.playFrom($('me'));
+  toast(livePeers.length ? 'Sent — tap Save on your phone' : 'Ready — open WinDrop on your phone to save', 'ok');
+}
+$('sendBtn').onclick = () => $('file').click();
+$('file').onchange = e => { shareFiles([...e.target.files]); e.target.value = ''; };
+$('openBtn').onclick = $('openBtn2').onclick = () => fetch('/api/open', { method: 'POST' });
+$('quitBtn').onclick = async () => {
+  await fetch('/api/quit', { method: 'POST' }).catch(() => {});
+  window.close();
+};
+
+let dragDepth = 0;
+addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('drop').classList.add('on'); });
+addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('drop').classList.remove('on'); } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => {
+  e.preventDefault();
+  dragDepth = 0;
+  $('drop').classList.remove('on');
+  shareFiles([...e.dataTransfer.files]);
+});
+
+// ---------- pairing code + trusted devices ----------
+let pinState = { pin: '', expires: 0 };
+function showPin(s) {
+  pinState = s;
+  $('pin').textContent = s.pin ? `${s.pin.slice(0, 3)} ${s.pin.slice(3)}` : '––– –––';
+  tickPin();
+}
+function tickPin() {
+  const left = Math.max(0, pinState.expires - Date.now());
+  const sec = Math.ceil(left / 1000);
+  $('pinLeft').textContent = `New code in ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  $('pinBar').style.width = (left / 120000) * 100 + '%';
+}
+setInterval(tickPin, 1000);
+$('pinNew').onclick = async () => {
+  const r = await fetch('/api/pin/new', { method: 'POST' }).then(r => r.json()).catch(() => null);
+  if (r) showPin(r);
+};
+
+function ago(t) {
+  if (!t) return 'not seen since WinDrop started';
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return 'active now';
+  if (s < 3600) return `seen ${Math.floor(s / 60)} min ago`;
+  return `seen at ${time(t)}`;
+}
+function renderDevices(list) {
+  $('devices').innerHTML = list.length
+    ? list.map(d => `
+      <li class="row">
+        <span class="dev-ic">${icon('phone')}</span>
+        <div class="body"><div class="name">${esc(d.name)}</div><div class="meta">Paired ${new Date(d.added).toLocaleDateString()} · ${ago(d.lastSeen)}</div></div>
+        <button class="icon-btn" data-dev="${d.id}" title="Remove — it will need a new pairing code" aria-label="Remove ${esc(d.name)}">${icon('x')}</button>
+      </li>`).join('')
+    : `<li class="empty">${icon('phone')}No devices yet. Scan the QR code and type the pairing code.</li>`;
+}
+$('devices').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-dev]');
+  if (!b) return;
+  const r = await fetch('/api/devices/' + b.dataset.dev, { method: 'DELETE' }).catch(() => null);
+  toast(r && r.ok ? 'Device removed — it needs a new pairing code to connect again' : 'Could not remove device', r && r.ok ? 'ok' : 'bad');
+});
+setInterval(() => fetch('/api/info').then(r => r.json()).then(i => renderDevices(i.devices)).catch(() => {}), 60000);
+
+// ---------- Internet mode ----------
+function qrSvg(text, cell) {
+  if (!window.qrcode) return `<span>No internet to draw the QR code.</span>`;
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  return qr.createSvgTag(cell, 0);
+}
+
+let lastRoomQr = '';
+function showInternet(s) {
+  $('netSwitch').setAttribute('aria-checked', String(s.on));
+  $('roomBox').hidden = !s.on;
+  if (!s.on) return;
+  $('roomCode').textContent = s.code || '—';
+  const st = $('roomStatus');
+  st.className = 'room-status ' + (s.status === 'online' ? 'online' : s.status === 'error' ? 'error' : '');
+  $('roomStatusText').textContent =
+    s.status === 'online' ? 'Online — reachable from anywhere'
+    : s.status === 'error' ? s.error
+    : s.error || 'Starting secure tunnel…';
+  const ready = s.status === 'online' && s.url;
+  $('roomLinkRow').hidden = !ready;
+  if (ready) {
+    $('roomUrl').textContent = s.url;
+    // The QR carries the code after '#', which never leaves the phone, so scanning joins instantly.
+    const target = `${s.url}/#room=${(s.code || '').replace('-', '')}`;
+    if (target !== lastRoomQr) { $('roomQr').innerHTML = qrSvg(target, 3); lastRoomQr = target; }
+  }
+}
+$('netSwitch').onclick = async () => {
+  const want = $('netSwitch').getAttribute('aria-checked') !== 'true';
+  const r = await fetch('/api/internet?on=' + (want ? 1 : 0), { method: 'POST' }).then(r => r.json()).catch(() => null);
+  if (r) showInternet(r);
+};
+$('newCode').onclick = async () => {
+  const r = await fetch('/api/internet/new-code', { method: 'POST' }).then(r => r.json()).catch(() => null);
+  if (r) { showInternet(r); toast('New room code — phones using the old one were disconnected', 'ok'); }
+};
+$('copyRoom').onclick = async () => {
+  try { await navigator.clipboard.writeText($('roomUrl').textContent); toast('Link copied', 'ok'); }
+  catch { toast('Select the link and copy it', 'bad'); }
+};
+
+// ---------- start with Windows ----------
+function setSwitch(on) { $('autoSwitch').setAttribute('aria-checked', String(on)); }
+$('autoSwitch').onclick = async () => {
+  const want = $('autoSwitch').getAttribute('aria-checked') !== 'true';
+  const r = await fetch('/api/autostart?on=' + (want ? 1 : 0), { method: 'POST' }).then(r => r.json()).catch(() => null);
+  if (!r) return toast('Could not change startup setting', 'bad');
+  setSwitch(r.autostart);
+  toast(r.autostart ? 'WinDrop will start when you log in' : 'WinDrop won’t start with Windows', 'ok');
+};
+
+// ---------- notifications ----------
+// The server shows a Windows notification only when this window isn't in front, so tell it.
+const cid = Math.random().toString(36).slice(2);
+const isFocused = () => document.hasFocus() && !document.hidden;
+const reportFocus = () => fetch(`/api/focus?cid=${cid}&on=${isFocused() ? 1 : 0}`, { method: 'POST' }).catch(() => {});
+addEventListener('focus', reportFocus);
+addEventListener('blur', reportFocus);
+document.addEventListener('visibilitychange', reportFocus);
+
+$('testPc').onclick = async () => {
+  $('testPc').blur();
+  await fetch('/api/test-notification', { method: 'POST' });
+  toast('Test sent — look at the bottom-right of your screen', 'ok');
+};
+
+function showPhoneNotify(state) {
+  $('phoneSwitch').setAttribute('aria-checked', String(state.on));
+  $('ntfySetup').hidden = !state.on;
+  $('topic').textContent = state.topic || '';
+}
+$('phoneSwitch').onclick = async () => {
+  const want = $('phoneSwitch').getAttribute('aria-checked') !== 'true';
+  const r = await fetch('/api/phone-notify?on=' + (want ? 1 : 0), { method: 'POST' }).then(r => r.json()).catch(() => null);
+  if (r) showPhoneNotify(r);
+};
+$('copyTopic').onclick = async () => {
+  try { await navigator.clipboard.writeText($('topic').textContent); toast('Topic copied', 'ok'); }
+  catch { toast('Select the topic and copy it', 'bad'); }
+};
+$('testPhone').onclick = async () => {
+  const r = await fetch('/api/phone-notify/test', { method: 'POST' }).then(r => r.json()).catch(() => ({ error: 'WinDrop is not running' }));
+  toast(r.ok ? 'Test sent to your iPhone' : r.error, r.ok ? 'ok' : 'bad');
+};
+
+// ---------- live events ----------
+function connect() {
+  const es = new EventSource(`/api/events?role=desktop&cid=${cid}&focused=${isFocused() ? 1 : 0}`);
+  es.addEventListener('hello', e => {
+    const d = JSON.parse(e.data);
+    $('host').textContent = d.host;
+    receivedList = d.received;
+    renderReceived();
+    renderShared(d.shared);
+    d.uploads.forEach(addTransfer);
+    showPin(d.pin);
+    renderDevices(d.devices);
+    renderPeers(d.peers);
+  });
+  es.addEventListener('peers', e => renderPeers(JSON.parse(e.data)));
+  es.addEventListener('internet', e => showInternet(JSON.parse(e.data)));
+  es.addEventListener('pin', e => showPin(JSON.parse(e.data)));
+  es.addEventListener('devices', e => renderDevices(JSON.parse(e.data)));
+  es.addEventListener('paired', e => {
+    const d = JSON.parse(e.data);
+    WDRipple.playFrom($('me'), { amplitude: 8 });
+    toast(`${d.name} paired — it will connect by itself from now on`, 'ok');
+  });
+  es.addEventListener('shared', e => renderShared(JSON.parse(e.data)));
+  es.addEventListener('incoming', e => {
+    const t = addTransfer(JSON.parse(e.data));
+    const el = peerEls.get(t.pid);
+    if (el) WDRipple.playFrom(el.querySelector('.avatar'), { amplitude: 6, glow: 0.5 });
+  });
+  es.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    const t = transfers.get(d.id);
+    if (!t) return;
+    const now = performance.now();
+    if (now - t.lastTime > 500) {
+      const inst = ((d.got - t.lastGot) / (now - t.lastTime)) * 1000;
+      t.speed = t.speed ? t.speed * 0.7 + inst * 0.3 : inst;
+      t.lastGot = d.got;
+      t.lastTime = now;
+    }
+    t.got = d.got;
+    t.updated = Date.now();
+    paintTransfer(t);
+    paintPeer(t.pid);
+  });
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    const t = removeTransfer(d.id);
+    const pid = t ? t.pid : d.pid;
+    receivedList.unshift(d);
+    renderReceived();
+    settlePeer(pid, true);
+    // The whole window ripples out from the phone that sent the file.
+    const el = peerEls.get(pid);
+    if (el) WDRipple.playFrom(el.querySelector('.avatar'));
+    else WDRipple.playFrom($('me'));
+    toast(`Received ${d.name} from ${d.device}`, 'ok');
+  });
+  es.addEventListener('failed', e => {
+    const d = JSON.parse(e.data);
+    const t = removeTransfer(d.id);
+    if (t) settlePeer(t.pid, false);
+    toast(`${d.name} was cancelled`, 'bad');
+  });
+  es.addEventListener('quit', () => { $('state').textContent = 'WinDrop has stopped. Open it again from the Start menu.'; es.close(); });
+  es.onerror = () => { if (es.readyState !== EventSource.CLOSED) $('state').textContent = 'Reconnecting to WinDrop…'; };
+}
+
+// ---------- pairing card ----------
+function showQr(url) {
+  if (window.qrcode) {
+    const qr = qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    $('qr').innerHTML = qr.createSvgTag(4, 0);
+  } else {
+    $('qr').innerHTML = `<span>No internet to draw the QR code. On your iPhone, open Safari and type:<br><b>${esc(url)}</b></span>`;
+  }
+}
+fetch('/api/info').then(r => r.json()).then(info => {
+  const nets = info.networks;
+  const sel = $('net');
+  sel.innerHTML = nets.map((n, i) => `<option value="${i}">${esc(n.name)} — ${n.ip}</option>`).join('');
+  $('netField').hidden = nets.length < 2;
+  sel.onchange = () => showQr(nets[sel.value].url);
+  showQr(nets[0].url);
+  setSwitch(info.autostart);
+  showPhoneNotify(info.phoneNotify);
+  showInternet(info.internet);
+  $('auto').classList.toggle('off', !info.mdns);
+  $('autoText').innerHTML = info.mdns
+    ? `Auto-connect on: your phone finds this PC as <code>${esc(info.mdns)}</code>, even if its IP changes`
+    : 'Auto-connect name unavailable — your phone will use the IP address';
+});
+
+renderReceived();
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="WinDrop">
+<meta name="theme-color" content="#eef2f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#05070d" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<title>WinDrop</title>
+<style>
+  :root {
+    --bg: #eef2f8; --glow: rgba(0,113,227,.16);
+    --surface: rgba(255,255,255,.72); --border: rgba(15,23,42,.08);
+    --text: #0f172a; --muted: #5b6474;
+    --accent: #0071e3; --accent-bg: #0071e3; --accent-soft: rgba(0,113,227,.12); --wave: rgba(0,113,227,.26);
+    --ok: #1a7f37; --ok-soft: rgba(26,127,55,.12); --warn: #a65400; --bad: #c42b1c; --bad-soft: rgba(196,43,28,.1);
+    --shadow: 0 10px 30px rgba(15,23,42,.08);
+    --k-image: #0b7a75; --k-video: #c2410c; --k-music: #be185d; --k-archive: #a16207; --k-doc: #1d4ed8; --k-file: #475569;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #05070d; --glow: rgba(10,132,255,.2);
+      --surface: rgba(30,35,48,.62); --border: rgba(255,255,255,.08);
+      --text: #f2f5fa; --muted: #9aa4b5;
+      --accent: #4da3ff; --accent-soft: rgba(77,163,255,.14); --wave: rgba(10,132,255,.38);
+      --ok: #30d158; --ok-soft: rgba(48,209,88,.14); --warn: #ffb340; --bad: #ff6961; --bad-soft: rgba(255,105,97,.12);
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --k-image: #5eead4; --k-video: #fdba74; --k-music: #f9a8d4; --k-archive: #fcd34d; --k-doc: #93c5fd; --k-file: #cbd5e1;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body {
+    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background: radial-gradient(120% 60% at 50% 0%, var(--glow), transparent 70%), var(--bg);
+    background-attachment: fixed;
+    min-height: 100vh; min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; gap: 16px;
+    padding: calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 20px);
+    max-width: 560px; margin: 0 auto;
+  }
+  .i { width: 20px; height: 20px; flex: none; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+  .bar { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 22px; letter-spacing: -.3px; }
+  .brand .i { width: 26px; height: 26px; color: var(--accent); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px;
+    font-size: 14px; font-weight: 600; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--border);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .chip.on { color: var(--ok); } .chip.on .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft); }
+  .chip.off .dot { background: var(--warn); }
+
+  .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding-top: 4px; }
+  .radar { position: relative; width: min(78vw, 320px); aspect-ratio: 1; display: grid; place-items: center; }
+  .wave {
+    position: absolute; inset: 0; margin: auto; width: 38%; height: 38%; border-radius: 50%;
+    border: 1.5px solid var(--wave); background: radial-gradient(circle, transparent 58%, var(--wave));
+    opacity: 0; animation: wave 4.4s cubic-bezier(.2,.6,.35,1) infinite;
+  }
+  .wave:nth-child(2) { animation-delay: 1.1s; } .wave:nth-child(3) { animation-delay: 2.2s; } .wave:nth-child(4) { animation-delay: 3.3s; }
+  .radar.busy .wave { animation-duration: 1.6s; }
+  .radar.busy .wave:nth-child(2) { animation-delay: .4s; } .radar.busy .wave:nth-child(3) { animation-delay: .8s; } .radar.busy .wave:nth-child(4) { animation-delay: 1.2s; }
+  .radar.idle .wave { animation-play-state: paused; opacity: 0; }
+  @keyframes wave { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(2.6); opacity: 0; } }
+
+  .device {
+    position: relative; z-index: 2; width: 38%; aspect-ratio: 1; border-radius: 50%;
+    display: grid; place-items: center; color: #fff;
+    background: linear-gradient(160deg, #3a9bff, #0060d0);
+    box-shadow: 0 16px 40px rgba(0,96,208,.4), inset 0 1px 0 rgba(255,255,255,.4);
+    transition: transform .18s ease, filter .3s ease;
+  }
+  .device:active:not(:disabled) { transform: scale(.94); }
+  .device:disabled { cursor: default; }
+  .device.offline { filter: saturate(.2) brightness(.9); opacity: .7; }
+  .device .i { width: 44%; height: 44%; stroke-width: 1.6; }
+  .ring { position: absolute; inset: -9px; width: calc(100% + 18px); height: calc(100% + 18px); transform: rotate(-90deg); pointer-events: none; }
+  .ring circle { fill: none; stroke-width: 3.5; }
+  .ring .track { stroke: transparent; }
+  .ring .bar { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 289; stroke-dashoffset: 289; transition: stroke-dashoffset .25s ease; }
+  .radar.busy .ring .track { stroke: var(--border); }
+  .radar.ok .ring .bar { stroke: var(--ok); }
+
+  h1 { margin: 6px 0 2px; font-size: 26px; letter-spacing: -.4px; line-height: 1.2; overflow-wrap: anywhere; }
+  .sub { margin: 0; color: var(--muted); font-size: 16px; max-width: 34ch; overflow-wrap: anywhere; }
+
+  .cta { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; min-height: 54px; border-radius: 16px; padding: 0 22px;
+    background: var(--accent-bg); color: #fff; font-weight: 600; font-size: 17px;
+    box-shadow: 0 8px 24px rgba(0,113,227,.3); transition: transform .15s ease, opacity .2s ease;
+  }
+  .btn:active:not(:disabled) { transform: scale(.98); }
+  .btn:disabled { opacity: .4; box-shadow: none; cursor: default; }
+  .hint { margin: 0; text-align: center; font-size: 14px; color: var(--muted); }
+  .tip { padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); color: var(--text); }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 6px 14px 8px;
+    box-shadow: var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+  }
+  .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 2px 4px; }
+  .panel-head h2 { margin: 0; font-size: 17px; }
+  .panel-head .meta { font-size: 14px; color: var(--muted); }
+  .list { list-style: none; margin: 0; padding: 0; }
+  .item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .item:first-child { border-top: 0; }
+  .ficon { flex: none; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: color-mix(in srgb, currentColor 14%, transparent); }
+  .k-image { color: var(--k-image); } .k-video { color: var(--k-video); } .k-music { color: var(--k-music); }
+  .k-archive { color: var(--k-archive); } .k-doc { color: var(--k-doc); } .k-file { color: var(--k-file); }
+  .body { flex: 1; min-width: 0; }
+  .name { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta-line { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .meta-line .i { width: 14px; height: 14px; }
+  .item[data-state="done"] .meta-line { color: var(--ok); }
+  .item[data-state="failed"] .meta-line, .item[data-state="cancelled"] .meta-line { color: var(--bad); }
+  .item[data-state="retrying"] .meta-line { color: var(--warn); }
+  .progress { height: 5px; border-radius: 99px; background: var(--border); margin-top: 7px; overflow: hidden; }
+  .progress span { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
+  .item[data-state="done"] .progress span { background: var(--ok); }
+  .item[data-state="done"] .progress, .item[data-state="cancelled"] .progress, .item[data-state="failed"] .progress { display: none; }
+  .icon-btn { flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
+  .icon-btn:active { background: var(--border); }
+  .save {
+    flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 15px; text-decoration: none;
+  }
+  .save .i { width: 17px; height: 17px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 22px); z-index: 9500;
+    display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
+    padding: 12px 18px; border-radius: 999px; font-size: 15px; font-weight: 600;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+    transform: translate(-50%, 24px); opacity: 0; transition: transform .3s ease, opacity .3s ease; pointer-events: none;
+  }
+  .toast span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toast .i { color: var(--accent); } .toast.ok .i { color: var(--ok); } .toast.bad .i { color: var(--bad); }
+  .toast.on { transform: translate(-50%, 0); opacity: 1; }
+
+  /* iOS-style notification banner */
+  .banner {
+    position: fixed; z-index: 9550; top: calc(env(safe-area-inset-top) + 8px); left: 8px; right: 8px;
+    max-width: 544px; margin: 0 auto; display: flex; gap: 12px; align-items: center; text-align: left;
+    padding: 12px 14px; border-radius: 24px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); box-shadow: 0 16px 40px rgba(0,0,0,.22);
+    -webkit-backdrop-filter: blur(30px) saturate(1.6); backdrop-filter: blur(30px) saturate(1.6);
+    transform: translateY(calc(-100% - 40px)); transition: transform .45s cubic-bezier(.2,1.2,.35,1);
+  }
+  .banner.on { transform: translateY(0); }
+  .banner img { width: 38px; height: 38px; border-radius: 9px; flex: none; }
+  .banner .b-text { flex: 1; min-width: 0; }
+  .b-top { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .b-top b { color: var(--text); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; font-size: 12px; }
+  .b-title { font-weight: 600; font-size: 15px; margin-top: 1px; }
+  .b-body { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (prefers-reduced-motion: reduce) { .banner { transition: opacity .2s; opacity: 0; transform: none; } .banner.on { opacity: 1; } }
+
+  .gate { position: fixed; inset: 0; z-index: 9600; display: grid; place-items: center; padding: 32px; text-align: center; background: var(--bg); }
+  .gate[hidden] { display: none; }
+  .join { width: min(100%, 360px); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .join-icon { width: 72px; height: 72px; border-radius: 17px; box-shadow: var(--shadow); }
+  .join h2 { margin: 6px 0 0; font-size: 26px; }
+  .join p { margin: 0; color: var(--muted); font-size: 15px; }
+  .code-input {
+    width: 100%; min-height: 60px; text-align: center; border-radius: 16px; border: 1.5px solid var(--border);
+    background: var(--surface); color: var(--text); font: 600 28px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 4px;
+  }
+  .code-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .join-err { color: var(--bad) !important; min-height: 1.2em; font-weight: 600; }
+  .join-alt { font-size: 13px !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .wave { animation: none; opacity: .5; }
+    .wave:nth-child(1) { transform: scale(1.4); } .wave:nth-child(2) { transform: scale(1.8); opacity: .3; }
+    .wave:nth-child(3), .wave:nth-child(4) { display: none; }
+    .device, .btn, .ring .bar, .progress span, .toast { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="bar">
+    <div class="brand"><span id="logo"></span>WinDrop</div>
+    <div class="chip" id="chip" role="status"><span class="dot"></span><span id="chipText">Searching</span></div>
+  </header>
+
+  <section class="hero" aria-live="polite">
+    <div class="radar" id="radar">
+      <span class="wave"></span><span class="wave"></span><span class="wave"></span><span class="wave"></span>
+      <button class="device" id="target" aria-label="Send files to your PC" disabled>
+        <svg class="ring" viewBox="0 0 100 100" aria-hidden="true"><circle class="track" cx="50" cy="50" r="46"/><circle class="bar" id="ringBar" cx="50" cy="50" r="46"/></svg>
+        <span id="deviceIc"></span>
+      </button>
+    </div>
+    <h1 id="title">Looking for your PC</h1>
+    <p class="sub" id="sub">Keep your iPhone on the same Wi-Fi as your PC.</p>
+  </section>
+
+  <section class="cta">
+    <button class="btn" id="pick" disabled><span id="sendIc"></span>Send files</button>
+    <p class="hint">Photos, videos, ZIP, RAR — any file, any size. Choose <b>Choose Files</b> in the menu to send originals.</p>
+    <p class="hint tip" id="homeTip" hidden>Tip: tap Share, then <b>Add to Home Screen</b>. WinDrop will connect by itself every time you open it.</p>
+  </section>
+
+  <section class="panel" id="queuePanel" hidden>
+    <div class="panel-head"><h2>Sending</h2><span class="meta" id="queueMeta"></span></div>
+    <ul class="list" id="queue"></ul>
+  </section>
+
+  <section class="panel" id="sharedPanel" hidden>
+    <div class="panel-head"><h2>From your PC</h2></div>
+    <ul class="list" id="sharedList"></ul>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<button class="banner" id="banner" role="alert" aria-label="Notification">
+  <img src="/apple-touch-icon.png" alt="">
+  <span class="b-text">
+    <span class="b-top"><b>WinDrop</b><span>now</span></span>
+    <span class="b-title" id="bTitle"></span>
+    <span class="b-body" id="bBody"></span>
+  </span>
+</button>
+<div class="gate" id="gate" hidden>
+  <form class="join" id="joinForm" novalidate>
+    <img src="/apple-touch-icon.png" alt="" class="join-icon">
+    <h2 id="joinTitle">Pair with your PC</h2>
+    <p id="joinText">Type the 6-digit <b>pairing code</b> shown in WinDrop on your PC. It changes every 2 minutes.</p>
+    <input id="codeInput" class="code-input" autocomplete="one-time-code" autocapitalize="characters" autocorrect="off"
+           spellcheck="false" inputmode="numeric" maxlength="7" placeholder="000 000" aria-label="Pairing code">
+    <button class="btn" type="submit" id="joinBtn">Pair</button>
+    <p class="join-err" id="joinErr" role="alert"></p>
+    <p class="join-alt" id="joinAlt">Only devices that know this code can send files to your PC.</p>
+  </form>
+</div>
+<input type="file" id="file" multiple hidden>
+
+<script src="/common.js"></script>
+<script src="/ripple.js"></script>
+<script>
+const { $, icon, fileIcon, size, speed, eta, esc, toast } = WD;
+$('logo').innerHTML = icon('logo');
+$('deviceIc').innerHTML = icon('laptop');
+$('sendIc').innerHTML = icon('send');
+WDRipple.init($('app'));
+
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const params = new URLSearchParams(location.search);
+const token = params.get('t') || store.get('windrop.t') || '';
+if (params.get('t')) store.set('windrop.t', token);
+
+let pid = store.get('windrop.pid');
+if (!pid) { pid = Math.random().toString(36).slice(2, 12); store.set('windrop.pid', pid); }
+const ua = navigator.userAgent;
+const device = /iPad/.test(ua) || (/Macintosh/.test(ua) && 'ontouchend' in document) ? 'iPad'
+  : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android phone' : 'Phone';
+const auth = `t=${encodeURIComponent(token)}&pid=${pid}&device=${encodeURIComponent(device)}`;
+const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+
+let hostName = 'your PC';
+let online = false;
+let everOnline = false;
+let es = null;
+let knownShared = null;
+
+// ---------- connection state ----------
+function setOnline(isOnline) {
+  online = isOnline;
+  if (isOnline) everOnline = true;
+  $('chip').className = 'chip ' + (isOnline ? 'on' : everOnline ? 'off' : '');
+  $('chipText').textContent = isOnline ? 'Connected' : everOnline ? 'Reconnecting' : 'Searching';
+  $('radar').classList.toggle('idle', !isOnline && !running);
+  $('target').classList.toggle('offline', !isOnline);
+  if (running) return;
+  $('target').disabled = $('pick').disabled = !isOnline;
+  $('deviceIc').innerHTML = icon('laptop');
+  $('title').textContent = isOnline ? hostName : everOnline ? 'Reconnecting…' : 'Looking for your PC';
+  $('sub').textContent = isOnline ? 'Tap to send photos, videos or any file'
+    : 'Make sure WinDrop is running on your PC and both are on the same Wi-Fi.';
+}
+
+// Over the internet (the https room link) Cloudflare holds back live streams, so check every 3 s.
+const overInternet = location.protocol === 'https:';
+let pollTimer = null;
+
+async function poll() {
+  clearTimeout(pollTimer);
+  try {
+    const r = await fetch(`/api/poll?${auth}`, { cache: 'no-store' });
+    if (r.status === 401) { setOnline(false); return showJoin(); }
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    hostName = d.host;
+    setOnline(true);
+    renderShared(d.shared);
+  } catch {
+    setOnline(false);
+  }
+  pollTimer = setTimeout(poll, document.hidden ? 10000 : 3000);
+}
+
+function connect() {
+  if (overInternet) return poll();
+  if (es) es.close();
+  es = new EventSource(`/api/events?${auth}`);
+  es.addEventListener('hello', e => {
+    const d = JSON.parse(e.data);
+    hostName = d.host;
+    setOnline(true);
+    renderShared(d.shared);
+    upgradeToAutoName(d.mdns, d.port);
+  });
+  es.addEventListener('shared', e => renderShared(JSON.parse(e.data)));
+  es.onerror = () => setOnline(false);
+}
+
+// Prefer the PC's fixed name (windrop-<pc>.local) over its IP, so a saved Home Screen icon keeps
+// working even if the router gives the PC a new IP address.
+async function upgradeToAutoName(mdns, port) {
+  const onAutoName = mdns && location.hostname === mdns;
+  $('homeTip').hidden = standalone || (!!mdns && !onAutoName);
+  if (!mdns || onAutoName || running || !/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname)) return;
+  try {
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(`http://${mdns}:${port}/api/ping`, { signal: ctl.signal });
+    if (r.ok && !running) location.replace(`http://${mdns}:${port}/?t=${encodeURIComponent(token)}`);
+  } catch {
+    $('homeTip').hidden = standalone;
+  }
+}
+
+// iOS kills background connections; reconnect as soon as the app is visible again.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (overInternet) poll();
+  else if (!es || es.readyState === EventSource.CLOSED) connect();
+  if (running) keepAwake(true);
+});
+
+// ---------- in-app notifications ----------
+// A banner that slides down like an iOS notification, with a short chime and a badge in the tab
+// title while WinDrop is in the background.
+let audio = null;
+addEventListener('touchend', () => {          // iOS only lets sound play after the first tap
+  if (audio) return;
+  try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
+}, { once: true });
+
+function chime() {
+  if (!audio) return;
+  try {
+    audio.resume();
+    const now = audio.currentTime;
+    [[880, 0], [1320, 0.11]].forEach(([freq, at]) => {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + at);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.35);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(now + at);
+      osc.stop(now + at + 0.4);
+    });
+  } catch {}
+}
+
+let unseen = 0;
+let bannerTimer;
+let bannerTap = null;
+function notify(title, body, onTap) {
+  $('bTitle').textContent = title;
+  $('bBody').textContent = body;
+  bannerTap = onTap || null;
+  $('banner').classList.add('on');
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => $('banner').classList.remove('on'), 5000);
+  chime();
+  if (navigator.vibrate) navigator.vibrate(30);
+  if (document.hidden) { unseen++; document.title = `(${unseen}) WinDrop`; }
+}
+$('banner').addEventListener('click', () => {
+  $('banner').classList.remove('on');
+  if (bannerTap) bannerTap();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { unseen = 0; document.title = 'WinDrop'; }
+});
+const showShared = () => $('sharedPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+// ---------- PC -> phone ----------
+function renderShared(list) {
+  $('sharedPanel').hidden = !list.length;
+  $('sharedList').innerHTML = list.map(f => `
+    <li class="item">
+      ${fileIcon(f.name)}
+      <div class="body"><div class="name">${esc(f.name)}</div><div class="meta-line">${size(f.size)}</div></div>
+      <a class="save" href="/api/download/${f.id}?${auth}" download="${esc(f.name)}">${icon('download')}Save</a>
+    </li>`).join('');
+  if (knownShared) {
+    const fresh = list.filter(f => !knownShared.has(f.id));
+    if (fresh.length) {
+      WDRipple.playFrom($('target'), { speed: 900 });
+      notify(
+        fresh.length === 1 ? `${hostName} sent you a file` : `${hostName} sent you ${fresh.length} files`,
+        fresh.length === 1 ? `${fresh[0].name} · ${size(fresh[0].size)} — tap to save` : fresh.map(f => f.name).join(', '),
+        showShared,
+      );
+    }
+  }
+  knownShared = new Set(list.map(f => f.id));
+}
+
+// ---------- phone -> PC: chunked, resumable uploads ----------
+const CHUNK = 8 * 1024 * 1024;
+const queue = [];
+let running = false;
+let wakeLock = null;
+
+async function keepAwake(on) {
+  try {
+    if (on && 'wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch {}
+}
+
+function api(method, path) {
+  return fetch(path, { method }).then(async r => {
+    let body = {};
+    try { body = await r.json(); } catch {}
+    if (!r.ok) throw Object.assign(new Error(body.error || `Error ${r.status}`), { status: r.status, body });
+    return body;
+  });
+}
+
+function putChunk(it, blob) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    it.xhr = x;
+    x.open('PUT', `/api/upload/chunk?${auth}&id=${it.id}&offset=${it.sent}`);
+    x.timeout = 180000;
+    x.upload.onprogress = e => progress(it, it.sent + e.loaded);
+    x.onload = () => {
+      let body = {};
+      try { body = JSON.parse(x.responseText); } catch {}
+      if (x.status === 200) resolve(body);
+      else reject(Object.assign(new Error(body.error || `Error ${x.status}`), { status: x.status, body }));
+    };
+    x.onerror = x.ontimeout = () => reject(new Error('Connection lost'));
+    x.onabort = () => reject(new Error('Cancelled'));
+    x.send(blob);
+  });
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function addItems(files) {
+  for (const file of files) {
+    const it = {
+      file, state: 'queued', sent: 0, id: null, resync: false,
+      key: `${file.name}|${file.size}|${file.lastModified}|${pid}`,
+      speed: 0, lastBytes: 0, lastTime: 0,
+    };
+    it.el = document.createElement('li');
+    it.el.className = 'item';
+    it.el.innerHTML = `${fileIcon(file.name)}
+      <div class="body"><div class="name">${esc(file.name)}</div><div class="meta-line"></div><div class="progress"><span></span></div></div>
+      <button class="icon-btn" aria-label="Cancel ${esc(file.name)}">${icon('x')}</button>`;
+    it.el.querySelector('button').onclick = () => cancel(it);
+    $('queue').prepend(it.el);
+    queue.push(it);
+    paint(it);
+  }
+  $('queuePanel').hidden = false;
+  run();
+}
+
+function paint(it) {
+  it.el.dataset.state = it.state;
+  const meta = it.el.querySelector('.meta-line');
+  const total = it.file.size;
+  const sent = shownBytes(it);
+  const pct = total ? (sent / total) * 100 : 100;
+  it.el.querySelector('.progress span').style.width = pct + '%';
+  const btn = it.el.querySelector('button');
+  btn.hidden = !['queued', 'sending', 'retrying'].includes(it.state);
+  if (it.state === 'queued') meta.textContent = `${size(total)} · Waiting`;
+  else if (it.state === 'sending') {
+    const left = it.speed ? eta((total - sent) / it.speed) : '';
+    meta.textContent = `${size(sent)} of ${size(total)}${it.speed ? ' · ' + speed(it.speed) : ''}${left ? ' · ' + left : ''}`;
+  } else if (it.state === 'retrying') meta.innerHTML = `${icon('retry')}<span>Connection lost — resuming at ${Math.floor(pct)}%</span>`;
+  else if (it.state === 'done') meta.innerHTML = `${icon('check')}<span>Sent · ${size(total)}</span>`;
+  else if (it.state === 'cancelled') meta.textContent = it.error || 'Cancelled';
+  else if (it.state === 'failed') meta.innerHTML = `${icon('alert')}<span>${esc(it.error || 'Failed')}</span>`;
+  summary();
+}
+
+function progress(it, bytes) {
+  const now = performance.now();
+  if (it.lastTime && now - it.lastTime > 400) {
+    const inst = ((bytes - it.lastBytes) / (now - it.lastTime)) * 1000;
+    it.speed = it.speed ? it.speed * 0.7 + inst * 0.3 : inst;
+    it.lastBytes = bytes; it.lastTime = now;
+  } else if (!it.lastTime) {
+    it.lastBytes = bytes; it.lastTime = now;
+  }
+  it.live = bytes;
+  paint(it);
+}
+
+const shownBytes = it => (it.state === 'done' ? it.file.size : Math.max(it.live || 0, it.sent));
+
+function summary() {
+  const active = queue.filter(i => ['queued', 'sending', 'retrying'].includes(i.state));
+  const batch = queue.filter(i => i.batch === batchNo);
+  const total = batch.reduce((s, i) => s + i.file.size, 0) || 1;
+  const sent = batch.reduce((s, i) => s + shownBytes(i), 0);
+  $('ringBar').style.strokeDashoffset = 289 * (1 - Math.min(1, sent / total));
+  $('queueMeta').textContent = active.length ? `${active.length} left · ${size(total - sent)}` : '';
+  if (running) {
+    const current = queue.find(i => i.state === 'sending' || i.state === 'retrying');
+    $('title').textContent = current?.state === 'retrying' ? 'Waiting for Wi-Fi…' : `Sending to ${hostName}`;
+    $('sub').textContent = current ? current.file.name : '';
+  }
+}
+
+let batchNo = 0;
+async function run() {
+  if (running) return;
+  running = true;
+  batchNo++;
+  for (const it of queue) if (it.state === 'queued') it.batch = batchNo;
+  const radar = $('radar');
+  radar.classList.add('busy');
+  radar.classList.remove('ok', 'idle');
+  $('target').disabled = true;
+  $('deviceIc').innerHTML = icon('laptop');
+  keepAwake(true);
+
+  let it;
+  while ((it = queue.find(i => i.state === 'queued'))) {
+    it.batch = batchNo;
+    await sendItem(it);
+  }
+
+  running = false;
+  keepAwake(false);
+  radar.classList.remove('busy');
+  const batch = queue.filter(i => i.batch === batchNo);
+  const ok = batch.filter(i => i.state === 'done').length;
+  const failed = batch.filter(i => i.state === 'failed').length;
+  if (ok && !failed) {
+    radar.classList.add('ok');
+    $('deviceIc').innerHTML = icon('check');
+    $('title').textContent = 'Sent';
+    $('sub').textContent = ok === 1 ? `${batch.find(i => i.state === 'done').file.name} is on ${hostName}` : `${ok} files are on ${hostName}`;
+    WDRipple.playFrom($('target'), { speed: 900 });
+    notify(
+      `${hostName} received ${ok === 1 ? 'your file' : `${ok} files`}`,
+      ok === 1 ? `${batch.find(i => i.state === 'done').file.name} — saved in Downloads\\WinDrop` : 'Saved in Downloads\\WinDrop',
+    );
+  } else if (failed) {
+    $('title').textContent = 'Some files were not sent';
+    $('sub').textContent = 'Check the list below.';
+    toast(`${failed} file${failed > 1 ? 's' : ''} not sent`, 'bad');
+  }
+  setTimeout(() => {
+    if (running) return;
+    radar.classList.remove('ok');
+    $('ringBar').style.strokeDashoffset = 289;
+    $('pick').disabled = false;
+    setOnline(online);
+  }, 2600);
+}
+
+async function sendItem(it) {
+  it.state = 'sending';
+  paint(it);
+  let attempt = 0;
+  while (!it.cancelled) {
+    try {
+      if (!it.id || it.resync) {
+        const s = await api('POST', `/api/upload/start?${auth}&name=${encodeURIComponent(it.file.name)}&size=${it.file.size}&key=${encodeURIComponent(it.key)}`);
+        it.id = s.id; it.sent = s.received; it.resync = false;
+      }
+      while (it.sent < it.file.size) {
+        if (it.cancelled) return;
+        const end = Math.min(it.sent + CHUNK, it.file.size);
+        const r = await putChunk(it, it.file.slice(it.sent, end));
+        it.sent = r.received;
+        it.live = 0;
+        attempt = 0;
+        if (it.state !== 'sending') { it.state = 'sending'; }
+        paint(it);
+      }
+      await api('POST', `/api/upload/finish?${auth}&id=${it.id}`);
+      it.sent = it.file.size;
+      it.state = 'done';
+      paint(it);
+      return;
+    } catch (err) {
+      if (it.cancelled) return;
+      it.live = 0;
+      if (err.status === 409) { it.sent = err.body.received ?? it.sent; continue; }
+      if (err.status === 410) { it.state = 'cancelled'; it.error = 'Cancelled on the PC'; paint(it); return; }
+      if (err.status === 404) { it.id = null; it.sent = 0; continue; }
+      if (err.status === 401 || err.status === 400 || (err.status === 500 && /disk/i.test(err.message))) {
+        it.state = 'failed'; it.error = err.message; paint(it); return;
+      }
+      // Network trouble (Wi-Fi drop, screen locked, PC asleep): wait and resume where we stopped.
+      attempt++;
+      it.resync = true;
+      it.state = 'retrying';
+      it.speed = 0; it.lastTime = 0;
+      paint(it);
+      if (attempt > 120) { it.state = 'failed'; it.error = 'Could not reach your PC'; paint(it); return; }
+      await sleep(Math.min(1000 * attempt, 5000));
+      if (!it.cancelled) { it.state = 'sending'; paint(it); }
+    }
+  }
+}
+
+function cancel(it) {
+  it.cancelled = true;
+  if (it.xhr) it.xhr.abort();
+  if (it.id) fetch(`/api/upload?${auth}&id=${it.id}`, { method: 'DELETE' }).catch(() => {});
+  it.state = 'cancelled';
+  it.error = 'Cancelled';
+  paint(it);
+}
+
+addEventListener('beforeunload', e => { if (running) { e.preventDefault(); e.returnValue = ''; } });
+
+// ---------- pick files ----------
+function pick(e) {
+  if (e && e.clientX) WDRipple.play(e.clientX, e.clientY, { speed: 900, glow: 0.6 });
+  $('file').click();
+}
+$('target').addEventListener('click', pick);
+$('pick').addEventListener('click', pick);
+$('file').addEventListener('change', e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (files.length) addItems(files);
+});
+
+// ---------- pairing code (same Wi-Fi) / room code (Internet mode) ----------
+// On Wi-Fi a new device must type the temporary 6-digit code shown on the PC. Over the internet
+// (the https room link) it types the room code instead.
+const codeInput = $('codeInput');
+const roomMode = overInternet;
+if (roomMode) {
+  $('joinTitle').textContent = 'Join your PC';
+  $('joinText').innerHTML = 'Enter the room code shown under <b>Internet mode</b> in WinDrop on your PC.';
+  $('joinAlt').textContent = 'On the same Wi-Fi as your PC? Scan the QR code on the PC instead.';
+  $('joinBtn').textContent = 'Join';
+  codeInput.inputMode = 'text';
+  codeInput.maxLength = 9;
+  codeInput.placeholder = 'XXXX-XXXX';
+  codeInput.setAttribute('aria-label', 'Room code');
+}
+const CODE_LEN = roomMode ? 8 : 6;
+
+codeInput.addEventListener('input', () => {
+  if (roomMode) {
+    const raw = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    codeInput.value = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+  } else {
+    const raw = codeInput.value.replace(/\D/g, '').slice(0, 6);
+    codeInput.value = raw.length > 3 ? `${raw.slice(0, 3)} ${raw.slice(3)}` : raw;
+    if (raw.length === 6) join(raw); // submit as soon as all 6 digits are in
+  }
+  $('joinErr').textContent = '';
+});
+
+async function join(code) {
+  if ($('joinBtn').disabled) return;
+  $('joinBtn').disabled = true;
+  $('joinErr').textContent = '';
+  try {
+    const url = roomMode
+      ? `/api/room/join?code=${encodeURIComponent(code)}`
+      : `/api/pair?pin=${encodeURIComponent(code.replace(/\D/g, ''))}&device=${encodeURIComponent(device)}`;
+    const r = await fetch(url, { method: 'POST' });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || 'Could not join');
+    store.set('windrop.t', body.token);
+    location.replace(`${location.pathname}?t=${encodeURIComponent(body.token)}`);
+  } catch (err) {
+    $('joinErr').textContent = /fetch|network|load/i.test(err.message)
+      ? (roomMode ? 'Can’t reach your PC. Is Internet mode on?' : 'Can’t reach your PC. Is WinDrop running?')
+      : err.message;
+    $('joinBtn').disabled = false;
+    if (!roomMode) codeInput.value = '';
+    codeInput.focus();
+  }
+}
+
+$('joinForm').addEventListener('submit', e => {
+  e.preventDefault();
+  if (codeInput.value.replace(/[^A-Za-z0-9]/g, '').length !== CODE_LEN) {
+    $('joinErr').textContent = roomMode ? 'The room code has 8 letters and numbers.' : 'The pairing code has 6 digits.';
+    return;
+  }
+  join(codeInput.value);
+});
+
+function showJoin() {
+  $('gate').hidden = false;
+  // The QR on the PC puts the code after '#room=' (never sent anywhere), so scanning joins in one step.
+  const fromQr = /room=([A-Za-z0-9]{8})/.exec(location.hash);
+  if (fromQr) {
+    history.replaceState(null, '', location.pathname);
+    codeInput.value = fromQr[1].slice(0, 4) + '-' + fromQr[1].slice(4);
+    join(codeInput.value);
+  }
+}
+
+// ---------- start ----------
+(async () => {
+  if (!token) return showJoin();
+  try {
+    const r = await fetch(`/api/shared?${auth}`);
+    if (r.status === 401) return showJoin();
+  } catch {}
+  setOnline(false);
+  connect();
+})();
+</script>
+</body>
+</html>
